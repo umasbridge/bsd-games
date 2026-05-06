@@ -111,7 +111,8 @@ export default function NewAnalysis({ userId, onBack, onCreated }) {
       if (r.ew_participant_id) activeIds.add(r.ew_participant_id);
     }
 
-    setParticipants(allParts.filter(p => activeIds.has(p.id)));
+    const filtered = allParts.filter(p => activeIds.has(p.id));
+    setParticipants(filtered.length > 0 ? filtered : allParts);
   };
 
   const handleUrlSubmit = async () => {
@@ -247,7 +248,7 @@ export default function NewAnalysis({ userId, onBack, onCreated }) {
                 disabled={!url.trim()}
                 className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50"
               >
-                Scrape
+                Retrieve
               </button>
             </div>
             {error && <p className="text-sm text-red-600 mt-2">{error}</p>}
