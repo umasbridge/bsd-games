@@ -1,9 +1,23 @@
 {
   "name": "bsd-games",
+  "private": true,
   "version": "1.0.0",
   "type": "module",
   "main": "index.js",
-  "peerDependencies": {
-    "react": "^19.0.0"
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.97.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.18",
+    "@vitejs/plugin-react": "^5.1.1",
+    "tailwindcss": "^4.1.18",
+    "vite": "^7.3.1"
   }
 }
