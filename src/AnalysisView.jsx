@@ -211,15 +211,15 @@ export function buildTeamRows(boards, results, filters, participantMap) {
 
   const activeFilters = filters.active_filters || [];
 
-  // Compute our IMP total per board (open + closed from our perspective)
+  // Compute our IMP total per board from score swing (matches HandDiagram display)
   const withImps = pairs.map(pair => {
     let ourImps = null;
     if (pid) {
       const openOurs = pair.open.ns_participant_id === pid;
-      const openImps = openOurs ? (pair.open.imps_ns || 0) : (pair.open.imps_ew || 0);
+      const openScore = openOurs ? (pair.open.score || 0) : -(pair.open.score || 0);
       const closedOurs = pair.closed.ns_participant_id === pid;
-      const closedImps = closedOurs ? (pair.closed.imps_ns || 0) : (pair.closed.imps_ew || 0);
-      ourImps = openImps + closedImps;
+      const closedScore = closedOurs ? (pair.closed.score || 0) : -(pair.closed.score || 0);
+      ourImps = scoreToImps(openScore + closedScore);
     }
     return { ...pair, ourImps };
   });

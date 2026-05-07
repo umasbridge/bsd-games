@@ -160,16 +160,18 @@ def fetch_session(session_id):
         if boards:
             parts = session_id.split('_')
             server_id = parts[0] if parts else session_id
+            segment_id = parts[1] if len(parts) >= 2 else None
+            segment_name = f'{server_id}_{segment_id}' if segment_id else session_id
             return {
                 'miniSessionId': session_id,
                 'name': session_id,
                 'tournamentName': server_id.upper(),
                 'tournamentId': None,
-                'eventName': '',
-                'eventId': None,
+                'eventName': segment_name,
+                'eventId': segment_id,
                 'eventOrder': None,
-                'segmentName': '',
-                'segmentId': None,
+                'segmentName': segment_name,
+                'segmentId': segment_id,
                 'segmentOrder': None,
                 'type': 'TEAM',
                 'calcType': 'IMP',
@@ -206,6 +208,15 @@ def build_event_data(session, tournament_id):
     calc = session.get('calcType', 'IMP')
     event_name = session.get('eventName') or session.get('segmentName') or 'Main'
 
+    # For non-archived sessions, build a descriptive name:
+    # <tournament> - <segment_id> - <type>
+    if not session.get('tournamentId') and event_name and '_' in event_name:
+        tournament_name = session.get('tournamentName') or ''
+        segment_id = session.get('segmentId') or ''
+        scoring_label = calc.upper() if calc else 'IMP'
+        type_label = 'Teams' if tt == 'TEAM' else 'Pairs'
+        event_name = f'{type_label} ({scoring_label}) · {segment_id}'
+
     return {
         'tournament_id': tournament_id,
         'name': event_name,
@@ -221,6 +232,10 @@ def build_event_data(session, tournament_id):
 def build_stage_data(session, event_id, source_url):
     """Build bg_stages row from miniSession."""
     stage_name = session.get('segmentName') or session.get('name') or 'Main'
+    # For non-archived sessions with generic names, include boards/rounds info
+    if not session.get('tournamentId') and stage_name and '_' in stage_name:
+        bpr = session.get('boardsPerRound', '')
+        stage_name = f'{stage_name} ({bpr} boards)' if bpr else stage_name
 
     return {
         'event_id': event_id,
@@ -813,7 +828,8 @@ def scrape(url_or_id, dry_run=False):
     session_id = extract_session_id(url_or_id)
 
     # Handle comma-separated multi-session (from _lookup_session_by_server_segment)
-    first_session_id = session_id.split(',')[0] if ',' in session_id else session_id
+    all_session_ids = session_id.split(',') if ',' in session_id else [session_id]
+    first_session_id = all_session_ids[0]
 
     # 1. Fetch session metadata to identify the tournament
     print('Fetching session metadata...')
@@ -830,8 +846,14 @@ def scrape(url_or_id, dry_run=False):
                            if s.get('tournamentId') == lb_tournament_id]
 
     if not tournament_sessions:
-        # Fallback: just scrape the single session/segment
-        tournament_sessions = [session]
+        # Fallback: build stub sessions for all discovered session IDs
+        tournament_sessions = []
+        for sid in all_session_ids:
+            stub = dict(session)
+            stub['miniSessionId'] = sid
+            stub['name'] = sid
+            tournament_sessions.append(stub)
+        print(f'  Not in archive index — using {len(tournament_sessions)} probed sessions')
 
     # 3. Group sessions: tournament → events → stages (segments)
     events = {}

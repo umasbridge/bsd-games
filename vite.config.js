@@ -40,7 +40,7 @@ function scrapePlugin() {
 
             execFile('python3', [scraperPath, url], {
               cwd: projectRoot,
-              timeout: 300000,
+              timeout: 600000,
               env,
             }, (err, stdout, stderr) => {
               res.setHeader('Content-Type', 'application/json');
