@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabase.js';
 import AnalysisList from './AnalysisList.jsx';
 import NewAnalysis from './NewAnalysis.jsx';
@@ -9,6 +9,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState('list');
   const [activeAnalysis, setActiveAnalysis] = useState(null);
+  const displayRowsCache = useRef({});
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session: s } }) => {
@@ -27,6 +28,7 @@ export default function App() {
     return (
       <NewAnalysis
         userId={userId}
+        isAdmin={true}
         onBack={() => setView('list')}
         onCreated={(analysis) => {
           setActiveAnalysis(analysis);
@@ -42,6 +44,7 @@ export default function App() {
         analysis={activeAnalysis}
         userId={userId}
         onBack={() => { setActiveAnalysis(null); setView('list'); }}
+        onDisplayRows={(rows) => { displayRowsCache.current[activeAnalysis.id] = rows; }}
       />
     );
   }
@@ -49,8 +52,10 @@ export default function App() {
   return (
     <AnalysisList
       userId={userId}
+      isAdmin={true}
       onNew={() => setView('new')}
       onOpen={(analysis) => { setActiveAnalysis(analysis); setView('view'); }}
+      displayRowsCache={displayRowsCache.current}
     />
   );
 }

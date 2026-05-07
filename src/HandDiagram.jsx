@@ -3,7 +3,7 @@ import { useState } from 'react';
 const SUIT_SYM = { S: '♠', H: '♥', D: '♦', C: '♣' };
 const SUIT_CLR = { S: '#000', H: '#c62828', D: '#c62828', C: '#2e7d32' };
 
-export default function HandDiagram({ board, result, otherRoom, participantMap, ourParticipantId, onOtherRoom, onAnalysis, onTraveller, isTeams, ddBest, optimalLines }) {
+export default function HandDiagram({ board, result, otherRoom, participantMap, ourParticipantId, onOtherRoom, onAnalysis, onTraveller, onNotes, notesLoading, isTeams, ddBest, optimalLines }) {
   const vul = board.vulnerability;
 
   const playerLabel = (dir) => {
@@ -21,6 +21,7 @@ export default function HandDiagram({ board, result, otherRoom, participantMap, 
   };
 
   const contractStr = result ? fmtContract(result) : '';
+  const hasBidding = result?.lin && parseBiddingFromLin(result.lin);
   const leadStr = result ? fmtLead(result) : '';
   const scoreStr = result ? (result.score > 0 ? `+${result.score}` : `${result.score}`) : '';
   const resultStr = result?.overtricks != null
@@ -51,130 +52,186 @@ export default function HandDiagram({ board, result, otherRoom, participantMap, 
     boardImps = scoreToImps(ourScoreHere + ourScoreThere);
   }
 
+  const resultBar = result && (
+    <div style={{ fontSize: '0.85rem' }}>
+      {!hasBidding && !result.passed_out && (
+        <span style={{ fontWeight: 700 }}>
+          {fmtContractColored(result)} <span style={{ color: '#6b7280', fontWeight: 400 }}>by {result.declarer}</span>
+          <span style={{ color: '#9ca3af', margin: '0 4px' }}>·</span>
+        </span>
+      )}
+      <span style={{ fontWeight: 700 }}>{resultStr}</span>
+      <span style={{ fontWeight: 700 }}> ({scoreStr})</span>
+      {mpPct != null && (
+        <span style={{ marginLeft: 6, fontWeight: 700, color: mpPct >= 60 ? '#15803d' : mpPct <= 40 ? '#dc2626' : '#6b7280' }}>
+          {mpPct}%
+        </span>
+      )}
+      {boardImps != null && (
+        <span style={{ marginLeft: 6, fontWeight: 700, color: boardImps > 0 ? '#15803d' : boardImps < 0 ? '#dc2626' : '#6b7280' }}>
+          {boardImps > 0 ? '+' : ''}{boardImps} IMPs
+        </span>
+      )}
+      <span style={{ color: '#6b7280', marginLeft: 8 }}>
+        Lead: {leadStr}
+      </span>
+    </div>
+  );
+
+  const optimalBlock = optimalLines && optimalLines.length > 0 && (
+    <div style={{ fontSize: '0.8rem', marginTop: 4 }}>
+      {optimalLines.map((line, i) => {
+        const c = line.contract;
+        const otStr = c.ot > 0 ? `+${c.ot}` : c.ot < 0 ? `↓${Math.abs(c.ot)}` : '=';
+        const sideScore = line.label === 'NS' ? line.nsScore : -line.nsScore;
+        const scoreStr = sideScore > 0 ? `+${sideScore}` : `${sideScore}`;
+        const mp = line.label === 'NS' ? line.nsMp : line.ewMp;
+        const sideImps = line.imps != null ? (line.label === 'NS' ? line.imps : -line.imps) : null;
+        return (
+          <div key={i} style={{ marginTop: i > 0 ? 2 : 0 }}>
+            <span style={{ color: '#92400e', fontWeight: 700, fontSize: '0.75rem' }}>Best for {line.label}: </span>
+            <span style={{ fontWeight: 600 }}>
+              {c.level}<span style={{ color: SUIT_CLR[c.denom] || '#333' }}>{SUIT_SYM[c.denom] || c.denom}</span>{c.x}
+            </span>
+            <span style={{ color: '#6b7280' }}> by {c.dir} {otStr} ({scoreStr})</span>
+            {sideImps != null && <span style={{ fontWeight: 600, color: sideImps > 0 ? '#15803d' : '#6b7280', marginLeft: 4 }}>{sideImps > 0 ? '+' : ''}{sideImps} IMPs</span>}
+            {sideImps == null && mp != null && <span style={{ fontWeight: 600, color: '#15803d', marginLeft: 4 }}>{Math.round(mp)}%</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  const buttonsBlock = (
+    <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+      {hasDDData(board) && <DDSPopup board={board} />}
+      {onTraveller && (
+        <button onClick={onTraveller}
+          style={{ fontSize: '0.75rem', padding: '2px 8px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>
+          Traveller
+        </button>
+      )}
+      {onNotes && (
+        <button onClick={onNotes} disabled={notesLoading}
+          style={{ fontSize: '0.75rem', padding: '2px 8px', background: '#7c3aed', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', opacity: notesLoading ? 0.5 : 1 }}>
+          {notesLoading ? '...' : 'My Notes'}
+        </button>
+      )}
+    </div>
+  );
+
+  const otherRoomBlock = isTeams && otherRoom && (
+    <div
+      onClick={onOtherRoom}
+      style={{
+        border: '1px solid #d1d5db',
+        borderRadius: 6, padding: '6px 10px', marginTop: 6,
+        cursor: onOtherRoom ? 'pointer' : 'default',
+        background: '#fff',
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ fontWeight: 700, fontSize: '0.8rem', color: '#1e40af' }}>OTHER ROOM</span>
+        {onOtherRoom && <span style={{ fontSize: '1.1rem', fontWeight: 700, color: '#2563eb' }}>→</span>}
+      </div>
+      <div style={{ marginTop: 2 }}>
+        {fmtContract(otherRoom)} by {otherRoom.declarer}
+        {' '}{otherRoom.overtricks != null ? (otherRoom.overtricks === 0 ? '= ' : otherRoom.overtricks > 0 ? `+${otherRoom.overtricks} ` : `${otherRoom.overtricks} `) : ' '}
+        ({otherRoom.score > 0 ? `+${otherRoom.score}` : `${otherRoom.score}`})
+      </div>
+    </div>
+  );
+
   return (
-    <div className="flex flex-col md:flex-row md:gap-5">
-      {/* Left panel: bidding, contract, other room, buttons */}
-      <div className="md:w-[200px] md:flex-shrink-0" style={{ fontSize: '0.85rem' }}>
-        {/* Bidding */}
-        {result?.lin && <BiddingTable lin={result.lin} dealer={board.dealer} />}
-
-        {/* Contract / Lead / Result */}
-        {result && (
-          <div style={{ border: '1px solid #e5e7eb', borderRadius: 6, padding: '6px 10px', marginTop: 6 }}>
-            <div>
-              <span style={{ color: '#6b7280' }}>Result: </span>
-              <span style={{ fontWeight: 700 }}>{resultStr}</span>
-              <span style={{ fontWeight: 700 }}> ({scoreStr})</span>
-              {mpPct != null && (
-                <span style={{ marginLeft: 6, fontWeight: 700, color: mpPct >= 60 ? '#15803d' : mpPct <= 40 ? '#dc2626' : '#6b7280' }}>
-                  {mpPct}%
-                </span>
-              )}
-              {boardImps != null && (
-                <span style={{ marginLeft: 6, fontWeight: 700, color: boardImps > 0 ? '#15803d' : boardImps < 0 ? '#dc2626' : '#6b7280' }}>
-                  {boardImps > 0 ? '+' : ''}{boardImps} IMPs
-                </span>
-              )}
-            </div>
-            <div style={{ color: '#6b7280', marginTop: 2 }}>
-              Lead: {leadStr}
-            </div>
-          </div>
-        )}
-
-        {/* Best for NS / Best for EW (both teams and pairs) */}
-        {optimalLines && optimalLines.length > 0 && (
-          <div style={{ border: '1px solid #e5e7eb', borderRadius: 6, padding: '6px 10px', marginTop: 6, fontSize: '0.8rem' }}>
-            {optimalLines.map((line, i) => {
-              const c = line.contract;
-              const otStr = c.ot > 0 ? `+${c.ot}` : c.ot < 0 ? `↓${Math.abs(c.ot)}` : '=';
-              const sideScore = line.label === 'NS' ? line.nsScore : -line.nsScore;
-              const scoreStr = sideScore > 0 ? `+${sideScore}` : `${sideScore}`;
-              const mp = line.label === 'NS' ? line.nsMp : line.ewMp;
-              const sideImps = line.imps != null ? (line.label === 'NS' ? line.imps : -line.imps) : null;
-              return (
-                <div key={i} style={{ marginTop: i > 0 ? 4 : 0 }}>
-                  <span style={{ color: '#92400e', fontWeight: 700, fontSize: '0.75rem' }}>Best for {line.label}: </span>
-                  <span style={{ fontWeight: 600 }}>
-                    {c.level}<span style={{ color: SUIT_CLR[c.denom] || '#333' }}>{SUIT_SYM[c.denom] || c.denom}</span>{c.x}
-                  </span>
-                  <span style={{ color: '#6b7280' }}> by {c.dir} {otStr} ({scoreStr})</span>
-                  {sideImps != null && <span style={{ fontWeight: 600, color: sideImps > 0 ? '#15803d' : '#6b7280', marginLeft: 4 }}>{sideImps > 0 ? '+' : ''}{sideImps} IMPs</span>}
-                  {sideImps == null && mp != null && <span style={{ fontWeight: 600, color: '#15803d', marginLeft: 4 }}>{Math.round(mp)}%</span>}
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* Teams: Other Room box */}
-        {isTeams && otherRoom && (
-          <div
-            onClick={onOtherRoom}
-            style={{
-              border: '1px solid #d1d5db',
-              borderRadius: 6, padding: '6px 10px', marginTop: 6,
-              cursor: onOtherRoom ? 'pointer' : 'default',
-              background: '#fff',
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontWeight: 700, fontSize: '0.8rem', color: '#1e40af' }}>OTHER ROOM</span>
-              {onOtherRoom && <span style={{ fontSize: '1.1rem', fontWeight: 700, color: '#2563eb' }}>→</span>}
-            </div>
-            <div style={{ marginTop: 2 }}>
-              {fmtContract(otherRoom)} by {otherRoom.declarer}
-              {' '}{otherRoom.overtricks != null ? (otherRoom.overtricks === 0 ? '= ' : otherRoom.overtricks > 0 ? `+${otherRoom.overtricks} ` : `${otherRoom.overtricks} `) : ' '}
-              ({otherRoom.score > 0 ? `+${otherRoom.score}` : `${otherRoom.score}`})
-            </div>
-          </div>
-        )}
-
-        {/* Buttons */}
-        <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-          {hasDDData(board) && <DDSPopup board={board} />}
-          {!isTeams && onTraveller && (
-            <button onClick={onTraveller}
-              style={{ fontSize: '0.75rem', padding: '2px 8px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>
-              Traveller
-            </button>
-          )}
+    <div>
+      {/* Mobile: compact layout — result bar, deal, analysis, buttons */}
+      <div className="md:hidden">
+        {resultBar}
+        <div style={{ marginTop: 4 }}>
+          <DealDiagram board={board} playerLabel={playerLabel} vul={vul} />
         </div>
+        {optimalBlock}
+        {otherRoomBlock}
+        {buttonsBlock}
       </div>
 
-      {/* Deal diagram — shows first on mobile (order-first), second on desktop */}
-      <div className="order-first md:order-last" style={{ flex: 1 }}>
-        <div style={{
-          display: 'inline-grid',
-          gridTemplateColumns: 'auto auto auto',
-          gridTemplateRows: 'auto auto auto',
-          columnGap: 12,
-          rowGap: 4,
-          alignItems: 'center',
-          fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
-          fontSize: '0.9rem',
-          color: '#000',
-        }}>
-          <div style={{ gridColumn: 2, gridRow: 1, justifySelf: 'start' }}>
-            <PlayerLabel name={playerLabel('N')} dir="N" isDealer={board.dealer === 'N'} />
-            <HandBlock board={board} dir="n" />
+      {/* Desktop: side-by-side — left panel | deal diagram */}
+      <div className="hidden md:flex md:gap-5">
+        <div style={{ fontSize: '0.85rem', flex: '0 0 320px' }}>
+          {result?.lin && <BiddingTable lin={result.lin} dealer={board.dealer} />}
+          {result && (
+            <div style={{ border: '1px solid #e5e7eb', borderRadius: 6, padding: '6px 10px', marginTop: 6 }}>
+              {!hasBidding && !result.passed_out && (
+                <div style={{ fontWeight: 700, marginBottom: 2 }}>
+                  {fmtContractColored(result)} <span style={{ color: '#6b7280', fontWeight: 400 }}>by {result.declarer}</span>
+                </div>
+              )}
+              <div>
+                <span style={{ color: '#6b7280' }}>Result: </span>
+                <span style={{ fontWeight: 700 }}>{resultStr}</span>
+                <span style={{ fontWeight: 700 }}> ({scoreStr})</span>
+                {mpPct != null && (
+                  <span style={{ marginLeft: 6, fontWeight: 700, color: mpPct >= 60 ? '#15803d' : mpPct <= 40 ? '#dc2626' : '#6b7280' }}>
+                    {mpPct}%
+                  </span>
+                )}
+                {boardImps != null && (
+                  <span style={{ marginLeft: 6, fontWeight: 700, color: boardImps > 0 ? '#15803d' : boardImps < 0 ? '#dc2626' : '#6b7280' }}>
+                    {boardImps > 0 ? '+' : ''}{boardImps} IMPs
+                  </span>
+                )}
+              </div>
+              <div style={{ color: '#6b7280', marginTop: 2 }}>
+                Lead: {leadStr}
+              </div>
+            </div>
+          )}
+          <div style={{ marginTop: 6 }}>
+            {optimalBlock}
           </div>
-          <div style={{ gridColumn: 1, gridRow: 2, justifySelf: 'end' }}>
-            <PlayerLabel name={playerLabel('W')} dir="W" isDealer={board.dealer === 'W'} />
-            <HandBlock board={board} dir="w" />
-          </div>
-          <div style={{ gridColumn: 2, gridRow: 2, justifySelf: 'start' }}>
-            <Compass vul={vul} dealer={board.dealer} />
-          </div>
-          <div style={{ gridColumn: 3, gridRow: 2, justifySelf: 'start' }}>
-            <PlayerLabel name={playerLabel('E')} dir="E" isDealer={board.dealer === 'E'} />
-            <HandBlock board={board} dir="e" />
-          </div>
-          <div style={{ gridColumn: 2, gridRow: 3, justifySelf: 'start' }}>
-            <PlayerLabel name={playerLabel('S')} dir="S" isDealer={board.dealer === 'S'} />
-            <HandBlock board={board} dir="s" />
-          </div>
+          {otherRoomBlock}
+          {buttonsBlock}
         </div>
+        <div style={{ flex: 1 }}>
+          <DealDiagram board={board} playerLabel={playerLabel} vul={vul} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function DealDiagram({ board, playerLabel, vul }) {
+  return (
+    <div style={{
+      display: 'inline-grid',
+      gridTemplateColumns: 'auto auto auto',
+      gridTemplateRows: 'auto auto auto',
+      columnGap: 12,
+      rowGap: 4,
+      alignItems: 'center',
+      fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+      fontSize: '0.9rem',
+      color: '#000',
+    }}>
+      <div style={{ gridColumn: 2, gridRow: 1, justifySelf: 'start' }}>
+        <PlayerLabel name={playerLabel('N')} dir="N" isDealer={board.dealer === 'N'} />
+        <HandBlock board={board} dir="n" />
+      </div>
+      <div style={{ gridColumn: 1, gridRow: 2, justifySelf: 'end' }}>
+        <PlayerLabel name={playerLabel('W')} dir="W" isDealer={board.dealer === 'W'} />
+        <HandBlock board={board} dir="w" />
+      </div>
+      <div style={{ gridColumn: 2, gridRow: 2, justifySelf: 'start' }}>
+        <Compass vul={vul} dealer={board.dealer} />
+      </div>
+      <div style={{ gridColumn: 3, gridRow: 2, justifySelf: 'start' }}>
+        <PlayerLabel name={playerLabel('E')} dir="E" isDealer={board.dealer === 'E'} />
+        <HandBlock board={board} dir="e" />
+      </div>
+      <div style={{ gridColumn: 2, gridRow: 3, justifySelf: 'start' }}>
+        <PlayerLabel name={playerLabel('S')} dir="S" isDealer={board.dealer === 'S'} />
+        <HandBlock board={board} dir="s" />
       </div>
     </div>
   );

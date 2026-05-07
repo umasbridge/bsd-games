@@ -20,11 +20,12 @@ import urllib.request
 import urllib.parse
 from xml.etree import ElementTree
 
-from utils import hand_hcp, contract_display
+from utils import hand_hcp, contract_display, compute_dd
 from lin import generate_lin
 from db import (
-    insert_tournament, insert_participants, insert_boards,
-    insert_board_results, tournament_exists,
+    upsert_tournament, upsert_event, insert_stage,
+    insert_participants, insert_boards,
+    insert_board_results, stage_exists, update_board_dd,
 )
 
 _ssl_ctx = ssl.create_default_context()
@@ -279,16 +280,18 @@ def parse_tricks_bw(tricks_str, contract_level):
 # ── Main scrape logic ─────────────────────────────────────────────
 
 def scrape(url, dry_run=False):
-    """Scrape a BridgeWebs event and write to Supabase."""
+    """Scrape a BridgeWebs event and write to Supabase.
+
+    Hierarchy: bg_tournaments → bg_events → bg_stages → bg_boards → bg_board_results
+    """
     club, event = parse_bridgewebs_url(url)
     print(f'Club: {club}, Event: {event}')
 
     source_url = f'https://www.bridgewebs.com/cgi-bin/bwor/bw.cgi?pid=display_rank&event={event}&club={club}'
 
-    if not dry_run:
-        if tournament_exists(source_url):
-            print('  Tournament already exists. Skipping.')
-            return
+    if not dry_run and stage_exists(source_url):
+        print('  Event already scraped. Skipping.')
+        return
 
     # Fetch all traveller data (single call gets everything)
     print('Fetching traveller data...')
@@ -308,34 +311,57 @@ def scrape(url, dry_run=False):
         print('  No board data found.')
         return
 
-    # Extract event name from first board's title
-    first_title = board_pages[0].get('title', '')
-    # "Board No 1 None Vul Dealer North"
-    event_name = f'{club.upper()} Pairs {event}'
+    event_date = _event_date(event)
+    tournament_name = f'{club.upper()} {event_date or event}'
 
-    meta = {
-        'name': event_name,
-        'date_start': _event_date(event),
-        'venue': None,
+    # ── Create hierarchy: tournament → event → stage ──
+
+    tournament_data = {
+        'name': tournament_name,
+        'location': None,
+        'date_start': event_date,
+        'source_format': 'bridgewebs',
+        'source_meta': {'club': club},
+    }
+
+    event_data_template = {
+        'name': 'Pairs',
         'type': 'pairs',
         'scoring': 'mp',
-        'source_format': 'bridgewebs',
+        'event_order': 1,
+        'source_url': source_url,
+        'source_meta': {'club': club, 'event': event},
+    }
+
+    stage_data_template = {
+        'name': 'Session',
+        'stage_order': 1,
         'source_url': source_url,
         'source_meta': {'club': club, 'event': event},
     }
 
     if dry_run:
-        print(f'\n[DRY RUN] Would create tournament: {meta["name"]}')
-        tournament_id = 'dry-run'
+        print(f'\n[DRY RUN] Tournament: {tournament_name}')
+        tournament_id = 'dry-run-t'
+        event_id = 'dry-run-e'
+        stage_id = 'dry-run-s'
     else:
-        tournament_id = insert_tournament(meta)
-        print(f'  Created tournament: {tournament_id}')
+        tournament_id = upsert_tournament(tournament_data)
+        print(f'  Tournament: {tournament_id}')
 
-    # Insert participants
+        event_data_template['tournament_id'] = tournament_id
+        event_id = upsert_event(event_data_template)
+        print(f'  Event: {event_id}')
+
+        stage_data_template['event_id'] = event_id
+        stage_id = insert_stage(stage_data_template)
+        print(f'  Stage: {stage_id}')
+
+    # Insert participants (linked to event)
     participant_rows = []
     for pnum, pdata in sorted(player_data.items()):
         participant_rows.append({
-            'tournament_id': tournament_id,
+            'event_id': event_id,
             'number': pnum,
             'name': pdata['name'],
             'roster': [
@@ -376,7 +402,6 @@ def scrape(url, dry_run=False):
                 parsed_hand = parse_hand_from_field(hand_field)
                 if parsed_hand:
                     hands, hcp, dd, minimax = parsed_hand
-                    # Compute HCP from cards if not in data
                     for d in ['n', 'e', 's', 'w']:
                         if hcp.get(f'hcp_{d}') is None:
                             hcp[f'hcp_{d}'] = hand_hcp(
@@ -395,9 +420,8 @@ def scrape(url, dry_run=False):
                       for denom in ['c', 'd', 'h', 's', 'nt']}
 
             board_rows.append({
-                'tournament_id': tournament_id,
+                'stage_id': stage_id,
                 'board_number': bn,
-                'stage': None,
                 'round': None,
                 'dealer': dealer,
                 'vulnerability': vul,
@@ -426,14 +450,13 @@ def scrape(url, dry_run=False):
                     mp_ns_str = parts[8].strip() if len(parts) > 8 else ''
                     mp_ew_str = parts[9].strip() if len(parts) > 9 else ''
 
-                    # Skip empty/passed out
                     if not contract_str:
                         continue
 
                     passed_out = contract_str.upper() in ('PASS', 'P', 'NP', 'A-')
                     if passed_out:
                         result_rows.append({
-                            'board_id': None, 'tournament_id': tournament_id,
+                            'board_id': None, 'stage_id': stage_id,
                             '_board_number': bn,
                             'ns_participant_id': participant_map.get(ns_pair),
                             'ew_participant_id': participant_map.get(ew_pair),
@@ -447,7 +470,7 @@ def scrape(url, dry_run=False):
                             'mp_ew': _parse_float(mp_ew_str),
                             'imps_ns': None, 'imps_ew': None,
                             'datum_ns': None, 'datum_ew': None,
-                            'room': None, 'round': None, 'stage': None,
+                            'room': None, 'round': None,
                             'table_number': None,
                             'player_n_name': player_data.get(ns_pair, {}).get('name1'),
                             'player_n_id': None,
@@ -473,7 +496,6 @@ def scrape(url, dry_run=False):
                     lead_suit, lead_rank, lead = parse_lead_bw(lead_str)
                     tricks, overtricks = parse_tricks_bw(tricks_str, contract_level)
 
-                    # Score from NS perspective
                     score = 0
                     if ns_score_str:
                         try:
@@ -489,7 +511,6 @@ def scrape(url, dry_run=False):
                     mp_ns = _parse_float(mp_ns_str)
                     mp_ew = _parse_float(mp_ew_str)
 
-                    # Player names from pair data
                     ns_p = player_data.get(ns_pair, {})
                     ew_p = player_data.get(ew_pair, {})
 
@@ -503,7 +524,7 @@ def scrape(url, dry_run=False):
                     )
 
                     result_rows.append({
-                        'board_id': None, 'tournament_id': tournament_id,
+                        'board_id': None, 'stage_id': stage_id,
                         '_board_number': bn,
                         'ns_participant_id': participant_map.get(ns_pair),
                         'ew_participant_id': participant_map.get(ew_pair),
@@ -517,7 +538,7 @@ def scrape(url, dry_run=False):
                         'mp_ns': mp_ns, 'mp_ew': mp_ew,
                         'imps_ns': None, 'imps_ew': None,
                         'datum_ns': None, 'datum_ew': None,
-                        'room': None, 'round': None, 'stage': None,
+                        'room': None, 'round': None,
                         'table_number': None,
                         'player_n_name': ns_p.get('name1'),
                         'player_n_id': None,
@@ -549,13 +570,23 @@ def scrape(url, dry_run=False):
     print(f'Inserting {len(board_rows)} boards...')
     board_id_map = insert_boards(board_rows)
 
-    board_num_to_id = {}
-    for (stage, rnd, bnum), bid in board_id_map.items():
-        board_num_to_id[bnum] = bid
+    # Compute DD data for boards missing it
+    needs_dd = [b for b in board_rows if b.get('dd_n_nt') is None]
+    if needs_dd:
+        print(f'Computing DD for {len(needs_dd)} boards...')
+        dd_count = 0
+        for b in needs_dd:
+            dd = compute_dd(b)
+            if dd:
+                board_id = board_id_map.get((b.get('round'), b['board_number']))
+                if board_id:
+                    update_board_dd(board_id, dd)
+                    dd_count += 1
+        print(f'  Updated {dd_count} boards with DD data')
 
     for result in result_rows:
         bn = result.pop('_board_number')
-        result['board_id'] = board_num_to_id.get(bn)
+        result['board_id'] = board_id_map.get((None, bn))
 
     result_rows = [r for r in result_rows if r.get('board_id')]
 
@@ -563,7 +594,7 @@ def scrape(url, dry_run=False):
     insert_board_results(result_rows)
 
     print(f'\nDone!')
-    print(f'  Tournament: {meta["name"]}')
+    print(f'  Tournament: {tournament_name}')
     print(f'  Boards: {len(board_rows)}')
     print(f'  Results: {len(result_rows)}')
     if errors:

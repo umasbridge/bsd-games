@@ -62,16 +62,14 @@ def generate_lin(*, dealer, vulnerability, hands, contract_level=None,
     """
     parts = []
 
-    # Player names
-    names = [player_n or '', player_e or '', player_s or '', player_w or '']
+    # Player names — BBO pn| order is S,W,N,E
+    names = [player_s or '', player_w or '', player_n or '', player_e or '']
     parts.append(f'pn|{",".join(names)}')
 
-    # Hands — md| starts with dealer number, then hands starting from dealer clockwise
+    # Hands — md| dealer number, then hands always in S,W,N,E order
     dealer_num = _DEALER_TO_LIN.get(dealer, '3')
-    dir_start = _DIR_ORDER.index(dealer) if dealer in _DIR_ORDER else 0
     hand_strs = []
-    for i in range(4):
-        d = _DIR_ORDER[(dir_start + i) % 4]
+    for d in ['S', 'W', 'N', 'E']:
         dl = d.lower()
         hand_strs.append(_encode_hand(
             hands.get(f'{dl}_spades', ''),

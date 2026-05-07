@@ -1,5 +1,53 @@
 """Shared utilities for bridge game scrapers."""
 
+# ── Double-dummy analysis ────────────────────────────────────────
+
+def compute_dd(board_row):
+    """Compute double-dummy tricks for a board row dict.
+
+    Takes a dict with keys like n_spades, n_hearts, etc.
+    Returns a dict with dd_n_c, dd_n_d, ..., dd_w_nt (20 keys),
+    or None if hand data is incomplete.
+    """
+    try:
+        from endplay.dds import calc_dd_table
+        from endplay.types import Deal, Player, Denom
+    except ImportError:
+        return None
+
+    dirs_order = ['n', 'e', 's', 'w']
+    suits_order = ['spades', 'hearts', 'diamonds', 'clubs']
+
+    hands = []
+    for d in dirs_order:
+        suit_holdings = []
+        for s in suits_order:
+            h = board_row.get(f'{d}_{s}', '') or ''
+            suit_holdings.append(h)
+        if not any(suit_holdings):
+            return None
+        hands.append('.'.join(suit_holdings))
+
+    pbn = f'N:{" ".join(hands)}'
+    deal = Deal(pbn)
+    table = calc_dd_table(deal)
+
+    denom_map = [
+        ('c', Denom.clubs), ('d', Denom.diamonds),
+        ('h', Denom.hearts), ('s', Denom.spades), ('nt', Denom.nt),
+    ]
+    player_map = [
+        ('n', Player.north), ('e', Player.east),
+        ('s', Player.south), ('w', Player.west),
+    ]
+
+    dd = {}
+    for dk, denom in denom_map:
+        for pk, player in player_map:
+            dd[f'dd_{pk}_{dk}'] = table[denom, player]
+    return dd
+
+
 # ── Card / Hand helpers ───────────────────────────────────────────
 
 HCP_VALUES = {'A': 4, 'K': 3, 'Q': 2, 'J': 1}

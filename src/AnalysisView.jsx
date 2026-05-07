@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { supabase } from './supabase.js';
+import { supabase as defaultSupabase } from './supabase.js';
 import HandDiagram from './HandDiagram.jsx';
 
-export default function AnalysisView({ analysis, userId, onBack }) {
+export default function AnalysisView({ supabase: sbProp, analysis, userId, onBack, onDisplayRows, DiscussionView }) {
+  const supabase = sbProp || defaultSupabase;
   const [boards, setBoards] = useState([]);
   const [results, setResults] = useState([]);
   const [participants, setParticipants] = useState([]);
@@ -16,14 +17,28 @@ export default function AnalysisView({ analysis, userId, onBack }) {
   useEffect(() => {
     if (!event?.id) return;
 
-    // Fetch stages — use specific stage if selected, otherwise all event stages
-    const stageQuery = filters.stage_id
-      ? supabase.from('bg_stages').select('id').eq('id', filters.stage_id)
-      : supabase.from('bg_stages').select('id').eq('event_id', event.id);
+    // Resolve stage IDs: new multi-stage → old single stage → all event stages
+    let stageQuery;
+    if (filters.stage_ids?.length) {
+      stageQuery = supabase.from('bg_stages').select('id').in('id', filters.stage_ids);
+    } else if (filters.stage_id) {
+      stageQuery = supabase.from('bg_stages').select('id').eq('id', filters.stage_id);
+    } else {
+      stageQuery = supabase.from('bg_stages').select('id').eq('event_id', event.id);
+    }
+
+    // Resolve event IDs for participant loading
+    const eventIds = filters.selections?.length
+      ? [...new Set(filters.selections.map(s => s.event_id))]
+      : [event.id];
 
     stageQuery.then(({ data: stages }) => {
         const stageIds = (stages || []).map(s => s.id);
         if (!stageIds.length) { setLoading(false); return; }
+
+        const participantQuery = eventIds.length === 1
+          ? supabase.from('bg_participants').select('id, number, name, roster').eq('event_id', eventIds[0]).order('number')
+          : supabase.from('bg_participants').select('id, number, name, roster').in('event_id', eventIds).order('number');
 
         return Promise.all([
           supabase
@@ -34,12 +49,9 @@ export default function AnalysisView({ analysis, userId, onBack }) {
           supabase
             .from('bg_board_results')
             .select('*')
-            .in('stage_id', stageIds),
-          supabase
-            .from('bg_participants')
-            .select('id, number, name, roster')
-            .eq('event_id', event.id)
-            .order('number'),
+            .in('stage_id', stageIds)
+            .order('id'),
+          participantQuery,
         ]);
       })
       .then((results) => {
@@ -85,6 +97,10 @@ export default function AnalysisView({ analysis, userId, onBack }) {
     }
   }, [boards, results, filters, isTeams, participantMap]);
 
+  useEffect(() => {
+    if (onDisplayRows && displayRows.length > 0) onDisplayRows(displayRows);
+  }, [displayRows]);
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center">
@@ -93,8 +109,31 @@ export default function AnalysisView({ analysis, userId, onBack }) {
     );
   }
 
+  const handleDownloadLin = () => {
+    const lines = [];
+    displayRows.forEach((row, i) => {
+      if (!row.board || !row.result?.lin) return;
+      const bn = row.board.board_number;
+      const n = i + 1;
+      const roomTag = row.result.room === 'open' ? 'o' : row.result.room === 'closed' ? 'c' : '';
+      lines.push(`qx|${roomTag}${n}|ah|Board ${bn}|${row.result.lin}`);
+      if (row.otherRoom?.lin) {
+        const otherTag = row.otherRoom.room === 'open' ? 'o' : row.otherRoom.room === 'closed' ? 'c' : '';
+        lines.push(`qx|${otherTag}${n}|ah|Board ${bn}|${row.otherRoom.lin}`);
+      }
+    });
+    if (!lines.length) return;
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${analysis.name.replace(/[^a-zA-Z0-9_-]/g, '_')}.lin`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
-    <div className="bg-white">
+    <div className="bg-white min-h-screen">
       {/* Header */}
       <div className="border-b border-gray-200 px-4 py-3 flex items-center gap-3">
         <button onClick={onBack} className="px-2 py-1 text-sm border border-gray-300 rounded hover:bg-gray-50">
@@ -103,7 +142,10 @@ export default function AnalysisView({ analysis, userId, onBack }) {
         <div>
           <h1 className="text-lg font-bold">{analysis.name}</h1>
           <p className="text-sm text-gray-500">
-            {tournament?.name} · {displayRows.length} boards
+            {filters.stage_ids?.length > 1
+              ? `${filters.stage_ids.length} stages · ${displayRows.length} boards`
+              : `${tournament?.name} · ${displayRows.length} boards`
+            }
           </p>
         </div>
       </div>
@@ -124,6 +166,12 @@ export default function AnalysisView({ analysis, userId, onBack }) {
               boardResults={resultsByBoard[row.board?.id] || []}
               highlightParticipantId={filters.participant_id}
               ourParticipantId={filters.participant_id}
+              supabase={supabase}
+              userId={userId}
+              analysisId={analysis.id}
+              analysisName={analysis.name}
+              sharedWith={filters.shared_with}
+              DiscussionView={DiscussionView}
             />
           ))
         )}
@@ -133,13 +181,16 @@ export default function AnalysisView({ analysis, userId, onBack }) {
 }
 
 
-function buildTeamRows(boards, results, filters, participantMap) {
+export function buildTeamRows(boards, results, filters, participantMap) {
   const boardMap = {};
   for (const b of boards) boardMap[b.id] = b;
 
+  // Sort results deterministically so grouping order is consistent across calls
+  const sorted = [...results].sort((a, b) => (a.id || '').localeCompare(b.id || ''));
+
   // Group results by board_id + match_id → open/closed pair
   const groups = {};
-  for (const r of results) {
+  for (const r of sorted) {
     if (!r.match_id) continue;
     const key = `${r.board_id}__${r.match_id}`;
     if (!groups[key]) groups[key] = {};
@@ -215,16 +266,22 @@ function buildTeamRows(boards, results, filters, participantMap) {
     });
   }
 
-  // Sort by board number then round
+  // Sort deterministically: board number, then round, then board_id as tiebreaker
   filtered.sort((a, b) => {
     const ba = boardMap[a.open.board_id]?.board_number || 0;
     const bb = boardMap[b.open.board_id]?.board_number || 0;
     if (ba !== bb) return ba - bb;
-    return (a.open.round || 0) - (b.open.round || 0);
+    const ra = a.open.round || 0;
+    const rb = b.open.round || 0;
+    if (ra !== rb) return ra - rb;
+    if (a.open.board_id < b.open.board_id) return -1;
+    if (a.open.board_id > b.open.board_id) return 1;
+    if (a.open.match_id < b.open.match_id) return -1;
+    if (a.open.match_id > b.open.match_id) return 1;
+    return 0;
   });
 
-  return filtered.map(({ open, closed, ourImps }) => {
-    // Show our team's room as the main result, opponent's room as "Other Room"
+  let rows = filtered.map(({ open, closed, ourImps }) => {
     let ours = open;
     let theirs = closed;
     if (pid) {
@@ -241,14 +298,28 @@ function buildTeamRows(boards, results, filters, participantMap) {
       ourImps,
     };
   });
+
+  // When no team selected, deduplicate by board — show first match, rest in traveller
+  if (!pid) {
+    const seen = {};
+    rows = rows.filter(r => {
+      const bid = r.board?.id;
+      if (!bid) return true;
+      if (seen[bid]) return false;
+      seen[bid] = true;
+      return true;
+    });
+  }
+
+  return rows;
 }
 
 
-function buildPairRows(boards, results, filters) {
+export function buildPairRows(boards, results, filters) {
   const boardMap = {};
   for (const b of boards) boardMap[b.id] = b;
 
-  let filtered = [...results];
+  let filtered = [...results].sort((a, b) => (a.id || '').localeCompare(b.id || ''));
 
   const pid = filters.participant_id;
   if (pid) {
@@ -268,17 +339,16 @@ function buildPairRows(boards, results, filters) {
           const threshold = filters.pct_threshold || 40;
           const maxMp = (r.mp_ns || 0) + (r.mp_ew || 0);
           const pct = maxMp > 0 ? ((r.mp_ns || 0) / maxMp) * 100 : 50;
-          // From our perspective: if we sat NS, use mp_ns; if EW, use mp_ew
           const ourPct = pid && r.ew_participant_id === pid
             ? (maxMp > 0 ? ((r.mp_ew || 0) / maxMp) * 100 : 50)
             : pct;
-          if (ourPct < threshold) return true;
+          if (ourPct >= threshold) return false;
         }
         if (f === 'suboptimal' && board && pid) {
-          if (isSuboptimalPair(r, board, pid)) return true;
+          if (!isSuboptimalPair(r, board, pid)) return false;
         }
       }
-      return false;
+      return true;
     });
   }
 
@@ -298,8 +368,80 @@ function buildPairRows(boards, results, filters) {
 
 // ── Board row with popup panels ──────────────────────────────────
 
-function BoardRow({ row, isTeams, participantMap, boardResults, highlightParticipantId, ourParticipantId }) {
+function BoardRow({ row, isTeams, participantMap, boardResults, highlightParticipantId, ourParticipantId, supabase, userId, analysisId, analysisName, sharedWith, DiscussionView }) {
   const [popup, setPopup] = useState(null);
+  const [notesDiscussion, setNotesDiscussion] = useState(null);
+  const [notesLoading, setNotesLoading] = useState(false);
+
+  const handleOpenNotes = async () => {
+    if (notesDiscussion) {
+      setPopup(popup === 'notes' ? null : 'notes');
+      return;
+    }
+    setNotesLoading(true);
+    const resourceId = `${analysisId}:${row.board.id}`;
+    const resourceType = 'game_board';
+
+    try {
+      // Find existing discussion for this resource
+      const { data: existing, error: findErr } = await supabase
+        .from('discussions')
+        .select('id, name, created_by')
+        .eq('resource_type', resourceType)
+        .eq('resource_id', resourceId)
+        .limit(1);
+
+      if (findErr) { console.error('Find discussion error:', findErr); setNotesLoading(false); return; }
+
+      let disc = existing?.[0];
+      if (disc) {
+        // Ensure current user is a member (ignore if already exists)
+        const { error: joinErr } = await supabase.from('discussion_members').insert(
+          { discussion_id: disc.id, user_id: userId }
+        );
+        if (joinErr && !joinErr.message?.includes('duplicate')) console.error('Join error:', joinErr);
+      }
+      if (!disc) {
+        // Create new discussion
+        const { data: created, error: createErr } = await supabase
+          .from('discussions')
+          .insert({
+            name: `Board ${row.board.board_number} Notes`,
+            created_by: userId,
+            resource_type: resourceType,
+            resource_id: resourceId,
+          })
+          .select('id, name, created_by')
+          .single();
+
+        if (createErr) { console.error('Create discussion error:', createErr); setNotesLoading(false); return; }
+
+        if (created) {
+          const members = [{ discussion_id: created.id, user_id: userId }];
+          for (const s of (sharedWith || [])) {
+            if (s.userId && s.userId !== userId) {
+              members.push({ discussion_id: created.id, user_id: s.userId });
+            }
+          }
+          for (const m of members) {
+          await supabase.from('discussion_members').insert(m).then(() => {}, () => {});
+        }
+          disc = created;
+        }
+      }
+
+      if (disc) {
+        setNotesDiscussion(disc);
+        setPopup('notes');
+      } else {
+        alert('Could not create or find discussion. Check browser console.');
+      }
+    } catch (e) {
+      console.error('Notes error:', e);
+      alert('Notes error: ' + e.message);
+    }
+    setNotesLoading(false);
+  };
 
   if (!row.board) return null;
 
@@ -503,7 +645,7 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
           <div className="text-lg font-bold text-gray-700">{row.board.board_number}</div>
         </div>
 
-        <div className="flex-1 min-w-0">
+        <div className="flex-1">
           <div className="px-3 py-2">
             <HandDiagram
               board={row.board}
@@ -516,14 +658,16 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
               optimalLines={optLines}
               onOtherRoom={isTeams && row.otherRoom ? () => setPopup(popup === 'otherroom' ? null : 'otherroom') : undefined}
               onAnalysis={undefined}
-              onTraveller={!isTeams ? () => setPopup(popup === 'traveller' ? null : 'traveller') : undefined}
+              onTraveller={boardResults.length > 1 ? () => setPopup(popup === 'traveller' ? null : 'traveller') : undefined}
+              onNotes={supabase ? () => handleOpenNotes() : undefined}
+              notesLoading={notesLoading}
             />
           </div>
         </div>
       </div>
 
       {/* Popup overlay */}
-      {popup && (
+      {popup && popup !== 'notes' && (
         <TravellerPopup
           popup={popup}
           board={row.board}
@@ -538,7 +682,147 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
           boardNumber={row.board.board_number}
         />
       )}
+
+      {/* Notes discussion popup */}
+      {popup === 'notes' && notesDiscussion && (
+        <NotesPopup
+          discussion={notesDiscussion}
+          supabase={supabase}
+          userId={userId}
+          onClose={() => setPopup(null)}
+          boardNumber={row.board.board_number}
+          analysisName={analysisName}
+          DiscussionView={DiscussionView}
+        />
+      )}
     </div>
+  );
+}
+
+
+function NotesPopup({ discussion, supabase, userId, onClose, boardNumber, analysisName, DiscussionView }) {
+  const [pos, setPos] = useState({ x: null, y: null });
+  const dragRef = React.useRef(null);
+
+  const handleMouseDown = (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'BUTTON') return;
+    const el = dragRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const offsetX = e.clientX - rect.left;
+    const offsetY = e.clientY - rect.top;
+    const onMove = (ev) => setPos({ x: ev.clientX - offsetX, y: ev.clientY - offsetY });
+    const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  };
+
+  if (DiscussionView) {
+    const style = pos.x != null
+      ? { position: 'fixed', left: pos.x, top: pos.y, zIndex: 50, cursor: 'move' }
+      : { position: 'fixed', right: 0, top: 0, zIndex: 50, cursor: 'move' };
+
+    return (
+      <div ref={dragRef} style={style} onMouseDown={handleMouseDown} onClick={(e) => e.stopPropagation()}>
+        <DiscussionView
+          discussion={discussion}
+          supabase={supabase}
+          userId={userId}
+          isOwner={discussion.created_by === userId}
+          onClose={onClose}
+          documentName={analysisName || ''}
+          docId={null}
+          hideUnlink
+        />
+      </div>
+    );
+  }
+
+  // Fallback: simple inline notes for standalone mode
+  return <NotesPopupFallback discussion={discussion} supabase={supabase} userId={userId} onClose={onClose} boardNumber={boardNumber} />;
+}
+
+function NotesPopupFallback({ discussion, supabase, userId, onClose, boardNumber }) {
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState('');
+  const [sending, setSending] = useState(false);
+  const scrollRef = React.useRef(null);
+
+  React.useEffect(() => {
+    supabase
+      .from('discussion_messages')
+      .select('id, content, user_id, created_at')
+      .eq('discussion_id', discussion.id)
+      .eq('deleted', false)
+      .order('created_at')
+      .then(({ data }) => setMessages(data || []));
+  }, [discussion.id]);
+
+  React.useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [messages]);
+
+  const handleSend = async () => {
+    const text = input.trim();
+    if (!text || sending) return;
+    setSending(true);
+    const { data } = await supabase
+      .from('discussion_messages')
+      .insert({ discussion_id: discussion.id, user_id: userId, content: text })
+      .select('id, content, user_id, created_at')
+      .single();
+    if (data) setMessages(prev => [...prev, data]);
+    setInput('');
+    setSending(false);
+  };
+
+  const panel = (
+    <>
+      <div className="sticky top-0 bg-white border-b border-gray-200 px-4 py-2 flex items-center justify-between z-10">
+        <span className="text-sm font-bold text-gray-700">Board {boardNumber} — Notes</span>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
+      </div>
+      <div ref={scrollRef} className="flex-1 overflow-auto p-4 space-y-3" style={{ minHeight: 200 }}>
+        {messages.length === 0 && <p className="text-sm text-gray-400">No notes yet.</p>}
+        {messages.map(m => (
+          <div key={m.id} className={`text-sm ${m.user_id === userId ? 'text-right' : ''}`}>
+            <div className={`inline-block px-3 py-2 rounded-lg max-w-[80%] ${m.user_id === userId ? 'bg-blue-100 text-gray-800' : 'bg-gray-100 text-gray-700'}`}>
+              {m.content}
+            </div>
+            <div className="text-xs text-gray-400 mt-0.5">
+              {new Date(m.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="border-t border-gray-200 p-3 flex gap-2">
+        <input
+          type="text"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+          placeholder="Add a note..."
+          className="flex-1 px-3 py-2 border border-gray-300 rounded text-sm"
+          autoFocus
+        />
+        <button onClick={handleSend} disabled={!input.trim() || sending}
+          className="px-3 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50">
+          Send
+        </button>
+      </div>
+    </>
+  );
+
+  return (
+    <>
+      <div className="hidden md:flex flex-col fixed right-0 top-0 bottom-0 bg-white border-l border-gray-200 shadow-lg z-30"
+           style={{ width: '45%', maxWidth: '500px', minWidth: '350px' }}>
+        {panel}
+      </div>
+      <div className="md:hidden fixed inset-0 bg-white z-50 flex flex-col">
+        {panel}
+      </div>
+    </>
   );
 }
 

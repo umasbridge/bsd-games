@@ -28,12 +28,13 @@ import urllib.request
 
 from utils import (
     SRINI_CARD_MAP, SRINI_DEALER_MAP, SRINI_DECL_MAP, SRINI_DENOM_MAP,
-    SRINI_SUIT_MAP, SRINI_VUL_MAP, hand_hcp, contract_display,
+    SRINI_SUIT_MAP, SRINI_VUL_MAP, hand_hcp, contract_display, compute_dd,
 )
 from lin import generate_lin
 from db import (
-    insert_tournament, insert_participants, insert_boards,
-    insert_board_results, tournament_exists,
+    upsert_tournament, upsert_event, insert_stage, find_stage,
+    insert_participants, insert_boards,
+    insert_board_results, stage_exists, update_board_dd,
 )
 
 # SSL workaround for macOS
@@ -166,7 +167,7 @@ def _parse_date(text):
 
 # ── Parse participants ────────────────────────────────────────────
 
-def parse_participants(results_data, tournament_id):
+def parse_participants(results_data, event_id):
     """Parse teams/pairs from results.json.
 
     Teams have _people[] array. Pairs have _person1 and _person2 objects.
@@ -210,7 +211,7 @@ def parse_participants(results_data, tournament_id):
             name = f'#{number}'
 
         rows.append({
-            'tournament_id': tournament_id,
+            'event_id': event_id,
             'number': number,
             'name': name,
             'roster': roster,
@@ -263,7 +264,7 @@ def parse_dd_tricks(hand_record):
 
 # ── Parse boards ──────────────────────────────────────────────────
 
-def parse_board(board_data, tournament_id, stage=None):
+def parse_board(board_data, stage_id):
     """Parse a single board's data into a bg_boards row and bg_board_results rows."""
     sg = board_data['ScoringGroups'][0]
     dist = sg.get('Distribution') or {}
@@ -299,9 +300,8 @@ def parse_board(board_data, tournament_id, stage=None):
     optimal_score = _parse_minimax_score(minimax)
 
     board_row = {
-        'tournament_id': tournament_id,
+        'stage_id': stage_id,
         'board_number': board_number,
-        'stage': stage,
         'round': None,  # Srini boards are shared across rounds within a stage
         'dealer': dealer,
         'vulnerability': vulnerability,
@@ -324,7 +324,7 @@ def _parse_minimax_score(minimax):
 
 # ── Parse score entries ───────────────────────────────────────────
 
-def parse_score_entry(entry, board_id, tournament_id, participant_map,
+def parse_score_entry(entry, board_id, stage_id, participant_map,
                       vulnerability, dealer, hands, is_teams,
                       player_lineups=None):
     """Parse a single score entry into a bg_board_results row."""
@@ -444,7 +444,7 @@ def parse_score_entry(entry, board_id, tournament_id, participant_map,
 
     return {
         'board_id': board_id,
-        'tournament_id': tournament_id,
+        'stage_id': stage_id,
         'ns_participant_id': ns_participant_id,
         'ew_participant_id': ew_participant_id,
         'match_id': match_id,
@@ -468,7 +468,6 @@ def parse_score_entry(entry, board_id, tournament_id, participant_map,
         'datum_ew': datum_ew,
         'room': room,
         'round': round_num,
-        'stage': None,  # set by caller
         'table_number': str(table_number) if table_number else None,
         'player_n_name': player_n_name,
         'player_n_id': player_n_id,
@@ -600,7 +599,10 @@ def build_stage_map(settings):
 # ── Main scrape logic ─────────────────────────────────────────────
 
 def scrape(base_url, dry_run=False):
-    """Scrape a Srini-format tournament and write to Supabase."""
+    """Scrape a Srini-format tournament and write to Supabase.
+
+    Hierarchy: bg_tournaments → bg_events → bg_stages → bg_boards → bg_board_results
+    """
     base_url = base_url.rstrip('/')
 
     # 1. Validate URL
@@ -610,39 +612,93 @@ def scrape(base_url, dry_run=False):
     tt = settings.get('TournamentType', 0)
     is_teams = tt == 2
     event_type = 'teams' if is_teams else 'pairs'
+    scoring = 'imp' if is_teams else 'mp'
     print(f'  Tournament: {tournament_name}')
     print(f'  Type: {event_type}')
     print(f'  Boards: {len(settings.get("BoardsNumbers", []))}')
 
-    if not dry_run:
-        if tournament_exists(base_url):
-            print(f'  Tournament already exists. Skipping.')
-            return
+    # Dedup check: skip if stages already exist for this URL
+    if not dry_run and stage_exists(base_url):
+        print('  Event already scraped. Skipping.')
+        return
 
     # 2. Parse tournament metadata
     meta = parse_tournament_meta(settings, base_url)
 
-    if dry_run:
-        print(f'\n[DRY RUN] Would create tournament: {meta["name"]}')
-    else:
-        tournament_id = insert_tournament(meta)
-        print(f'  Created tournament: {tournament_id}')
+    # ── Create hierarchy: tournament → event → stages ──
 
-    # 3. Fetch and insert participants
+    tournament_data = {
+        'name': tournament_name,
+        'location': meta.get('venue'),
+        'date_start': meta.get('date_start'),
+        'source_format': 'srini',
+        'source_meta': meta.get('source_meta'),
+    }
+
+    event_data = {
+        'name': tournament_name,
+        'type': event_type,
+        'scoring': scoring,
+        'event_order': 1,
+        'source_url': base_url,
+        'source_meta': {},
+    }
+
+    if dry_run:
+        print(f'\n[DRY RUN] Would create tournament: {tournament_name}')
+        tournament_id = 'dry-run-t'
+        event_id = 'dry-run-e'
+    else:
+        tournament_id = upsert_tournament(tournament_data)
+        print(f'  Tournament: {tournament_id}')
+
+        event_data['tournament_id'] = tournament_id
+        event_id = upsert_event(event_data)
+        print(f'  Event: {event_id}')
+
+    # 3. Build stage map (board_number → stage_name)
+    stage_map = build_stage_map(settings)
+
+    # Determine unique stage names (preserve order from settings)
+    if stage_map:
+        seen = {}
+        for b in sorted(stage_map.keys()):
+            sn = stage_map[b]
+            if sn not in seen:
+                seen[sn] = len(seen) + 1
+        stage_names_ordered = seen  # {name: order}
+    else:
+        stage_names_ordered = {'main': 1}
+
+    # Create bg_stages rows — one per unique stage name
+    stage_id_map = {}  # stage_name → stage_id
+    if dry_run:
+        for sn, order in stage_names_ordered.items():
+            stage_id_map[sn] = f'dry-run-s-{order}'
+    else:
+        for sn, order in stage_names_ordered.items():
+            stage_data = {
+                'event_id': event_id,
+                'name': sn,
+                'stage_order': order,
+                'source_url': base_url,
+                'source_meta': {},
+            }
+            stage_id_map[sn] = insert_stage(stage_data)
+            print(f'  Stage "{sn}": {stage_id_map[sn]}')
+
+    # 4. Fetch and insert participants (linked to event)
     print('Fetching results (participants)...')
     results_data = fetch_json(f'{base_url}/results.json')
 
     if dry_run:
-        participants = parse_participants(results_data, 'dry-run')
+        participants = parse_participants(results_data, 'dry-run-e')
         print(f'  Found {len(participants)} participants')
         participant_map = {p['number']: f'id-{p["number"]}' for p in participants}
     else:
-        participants = parse_participants(results_data, tournament_id)
+        participants = parse_participants(results_data, event_id)
         print(f'  Inserting {len(participants)} participants...')
         participant_map = insert_participants(participants)
-
-    # 4. Build stage map
-    stage_map = build_stage_map(settings)
 
     # 4b. Fetch player lineups (teams only)
     player_lineups = {}
@@ -654,8 +710,9 @@ def scrape(base_url, dry_run=False):
     all_boards = settings.get('BoardsNumbers', [])
     print(f'Fetching {len(all_boards)} boards...')
 
-    board_rows = []
-    result_rows = []
+    # Group boards by stage for insertion
+    boards_by_stage = {}  # stage_name → [board_row, ...]
+    results_by_stage = {}  # stage_name → [result_row, ...]
     errors = []
 
     for board_num in all_boards:
@@ -665,15 +722,18 @@ def scrape(base_url, dry_run=False):
             errors.append(f'Board {board_num}: {e}')
             continue
 
-        stage = stage_map.get(board_num)
+        # Determine which stage this board belongs to
+        stage_name = stage_map.get(board_num, 'main')
+        sid = stage_id_map.get(stage_name, list(stage_id_map.values())[0])
 
         board_row, scores, bn, vulnerability, dealer, hands = parse_board(
-            board_data, tournament_id if not dry_run else 'dry-run', stage
+            board_data, sid
         )
         if board_row is None:
             errors.append(f'Board {board_num}: no hand record')
             continue
-        board_rows.append(board_row)
+
+        boards_by_stage.setdefault(stage_name, []).append(board_row)
 
         # Parse each score entry
         for entry in scores:
@@ -681,7 +741,7 @@ def scrape(base_url, dry_run=False):
                 result = parse_score_entry(
                     entry,
                     board_id=None,  # filled in after board insert
-                    tournament_id=tournament_id if not dry_run else 'dry-run',
+                    stage_id=sid,
                     participant_map=participant_map,
                     vulnerability=vulnerability,
                     dealer=dealer,
@@ -692,8 +752,7 @@ def scrape(base_url, dry_run=False):
                 if result is None:
                     continue
                 result['_board_number'] = bn
-                result['stage'] = stage
-                result_rows.append(result)
+                results_by_stage.setdefault(stage_name, []).append(result)
             except Exception as e:
                 errors.append(f'Board {bn}, entry: {e}')
 
@@ -701,40 +760,62 @@ def scrape(base_url, dry_run=False):
         if board_num % 10 == 0 or board_num == all_boards[-1]:
             print(f'  Processed board {board_num}/{all_boards[-1]}')
 
+    total_boards = sum(len(v) for v in boards_by_stage.values())
+    total_results = sum(len(v) for v in results_by_stage.values())
+
     if dry_run:
         print(f'\n[DRY RUN] Summary:')
-        print(f'  Boards: {len(board_rows)}')
-        print(f'  Results: {len(result_rows)}')
+        print(f'  Stages: {len(stage_names_ordered)}')
+        print(f'  Boards: {total_boards}')
+        print(f'  Results: {total_results}')
         if errors:
             print(f'  Errors: {len(errors)}')
             for e in errors[:5]:
                 print(f'    {e}')
         return
 
-    # Insert boards
-    print(f'Inserting {len(board_rows)} boards...')
-    board_id_map = insert_boards(board_rows)
+    # Insert boards per stage, then fill in board_ids on results
+    all_result_rows = []
+    for stage_name in stage_names_ordered:
+        board_rows = boards_by_stage.get(stage_name, [])
+        result_rows = results_by_stage.get(stage_name, [])
 
-    # Map board_number → board_id for results
-    board_num_to_id = {}
-    for (stage, rnd, bnum), bid in board_id_map.items():
-        board_num_to_id[bnum] = bid
+        if board_rows:
+            print(f'  Inserting {len(board_rows)} boards for stage "{stage_name}"...')
+            board_id_map = insert_boards(board_rows)
 
-    # Fill in board_id on results
-    for result in result_rows:
-        bn = result.pop('_board_number')
-        result['board_id'] = board_num_to_id.get(bn)
+            # Compute DD for boards missing it
+            for (rnd, bnum), bid in board_id_map.items():
+                # Find the board_row to check DD data
+                matching = [b for b in board_rows if b['board_number'] == bnum]
+                if matching:
+                    br = matching[0]
+                    has_dd = any(br.get(f'dd_{d}_{dn}') is not None
+                                for d in ['n', 'e', 's', 'w']
+                                for dn in ['c', 'd', 'h', 's', 'nt'])
+                    if not has_dd:
+                        dd = compute_dd(br)
+                        if dd:
+                            update_board_dd(bid, dd)
 
-    # Remove results with no board_id (shouldn't happen)
-    result_rows = [r for r in result_rows if r.get('board_id')]
+            # Fill in board_id on results
+            for result in result_rows:
+                bn = result.pop('_board_number')
+                result['board_id'] = board_id_map.get((None, bn))
 
-    print(f'Inserting {len(result_rows)} board results...')
-    insert_board_results(result_rows)
+        # Remove results with no board_id
+        result_rows = [r for r in result_rows if r.get('board_id')]
+        all_result_rows.extend(result_rows)
+
+    if all_result_rows:
+        print(f'Inserting {len(all_result_rows)} board results...')
+        insert_board_results(all_result_rows)
 
     print(f'\nDone!')
     print(f'  Tournament: {tournament_name}')
-    print(f'  Boards: {len(board_rows)}')
-    print(f'  Results: {len(result_rows)}')
+    print(f'  Stages: {len(stage_names_ordered)}')
+    print(f'  Boards: {total_boards}')
+    print(f'  Results: {len(all_result_rows)}')
     if errors:
         print(f'  Errors ({len(errors)}):')
         for e in errors[:10]:

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from './supabase.js';
+import { supabase as defaultSupabase } from './supabase.js';
 
 const FORMAT_PATTERNS = [
   { format: 'srini',      match: (u) => /\/(settings|p\d+)\.json/.test(u) || /bfi\.net\.in|\/wp-content\/uploads\//.test(u) },
@@ -15,31 +15,29 @@ function detectFormat(url) {
   return null;
 }
 
-const FORMAT_LABELS = {
-  srini: 'Srini', bridgewebs: 'BridgeWebs', sg: 'SG', lovebridge: 'LoveBridge',
-};
-
-export default function NewAnalysis({ userId, onBack, onCreated }) {
+export default function NewAnalysis({ supabase: sbProp, userId, isAdmin, onBack, onCreated }) {
+  const supabase = sbProp || defaultSupabase;
   const [step, setStep] = useState('pick'); // pick | scraping | filters
   const [tournaments, setTournaments] = useState([]);
   const [loadingTournaments, setLoadingTournaments] = useState(true);
-  const [expandedTournament, setExpandedTournament] = useState(null);
+  const [expandedTournaments, setExpandedTournaments] = useState({});
 
   // URL input
   const [url, setUrl] = useState('');
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
 
-  // Selected event + stage
+  // Multi-stage selection: [{tournamentId, tournamentName, eventId, eventName, eventType, eventScoring, stageId, stageName, sourceFormat}]
+  const [selectedStages, setSelectedStages] = useState([]);
+
+  // Derived from selection (set when proceeding to filters)
   const [event, setEvent] = useState(null);
-  const [stage, setStage] = useState(null);
   const [tournament, setTournament] = useState(null);
   const [participants, setParticipants] = useState([]);
 
   // Filters
   const [name, setName] = useState('');
   const [selectedTeam, setSelectedTeam] = useState('');
-  const [playerSearch, setPlayerSearch] = useState('');
   const [selectedFilters, setSelectedFilters] = useState([]);
   const [impThreshold, setImpThreshold] = useState('5');
   const [pctThreshold, setPctThreshold] = useState('40');
@@ -47,10 +45,7 @@ export default function NewAnalysis({ userId, onBack, onCreated }) {
 
   const isTeams = event?.type === 'teams';
 
-  // Load existing tournaments on mount
-  useEffect(() => {
-    loadTournaments();
-  }, []);
+  useEffect(() => { loadTournaments(); }, []);
 
   const loadTournaments = async () => {
     const { data } = await supabase
@@ -63,7 +58,6 @@ export default function NewAnalysis({ userId, onBack, onCreated }) {
       `)
       .order('created_at', { ascending: false });
 
-    // Sort events and stages within each tournament
     const sorted = (data || []).map(t => ({
       ...t,
       bg_events: (t.bg_events || [])
@@ -77,33 +71,105 @@ export default function NewAnalysis({ userId, onBack, onCreated }) {
     setLoadingTournaments(false);
   };
 
-  const handleStageSelect = async (ev, stg, tourn) => {
-    setEvent(ev);
-    setStage(stg);
-    setTournament(tourn);
-    setName(`${tourn.name} - ${ev.name} - ${stg.name}`);
-    await loadParticipants(ev.id, stg.id);
+  const selectedStageIds = new Set(selectedStages.map(s => s.stageId));
+
+  const handleStageToggle = (ev, stg, tourn) => {
+    setSelectedStages(prev => {
+      const exists = prev.find(s => s.stageId === stg.id);
+      if (exists) return prev.filter(s => s.stageId !== stg.id);
+      return [...prev, {
+        tournamentId: tourn.id, tournamentName: tourn.name,
+        eventId: ev.id, eventName: ev.name, eventType: ev.type, eventScoring: ev.scoring,
+        stageId: stg.id, stageName: stg.name,
+        sourceFormat: tourn.source_format,
+      }];
+    });
+  };
+
+  const handleTournamentToggle = (tourn) => {
+    const allStages = (tourn.bg_events || []).flatMap(ev =>
+      (ev.bg_stages || []).map(stg => ({ ev, stg }))
+    );
+    const allChecked = allStages.every(({ stg }) => selectedStageIds.has(stg.id));
+    setSelectedStages(prev => {
+      if (allChecked) {
+        const stageIds = new Set(allStages.map(({ stg }) => stg.id));
+        return prev.filter(s => !stageIds.has(s.stageId));
+      }
+      const existing = new Set(prev.map(s => s.stageId));
+      const toAdd = allStages.filter(({ stg }) => !existing.has(stg.id)).map(({ ev, stg }) => ({
+        tournamentId: tourn.id, tournamentName: tourn.name,
+        eventId: ev.id, eventName: ev.name, eventType: ev.type, eventScoring: ev.scoring,
+        stageId: stg.id, stageName: stg.name,
+        sourceFormat: tourn.source_format,
+      }));
+      return [...prev, ...toAdd];
+    });
+  };
+
+  const handleEventToggle = (ev, tourn) => {
+    const stages = ev.bg_stages || [];
+    const allChecked = stages.every(s => selectedStageIds.has(s.id));
+    setSelectedStages(prev => {
+      if (allChecked) {
+        const stageIds = new Set(stages.map(s => s.id));
+        return prev.filter(s => !stageIds.has(s.stageId));
+      }
+      const existing = new Set(prev.map(s => s.stageId));
+      const toAdd = stages.filter(s => !existing.has(s.id)).map(stg => ({
+        tournamentId: tourn.id, tournamentName: tourn.name,
+        eventId: ev.id, eventName: ev.name, eventType: ev.type, eventScoring: ev.scoring,
+        stageId: stg.id, stageName: stg.name,
+        sourceFormat: tourn.source_format,
+      }));
+      return [...prev, ...toAdd];
+    });
+  };
+
+  const proceedToFilters = async () => {
+    if (!selectedStages.length) return;
+
+    const eventCounts = {};
+    for (const s of selectedStages) eventCounts[s.eventId] = (eventCounts[s.eventId] || 0) + 1;
+    const primaryEventId = Object.entries(eventCounts).sort((a, b) => b[1] - a[1])[0][0];
+    const primary = selectedStages.find(s => s.eventId === primaryEventId);
+
+    setEvent({ id: primaryEventId, name: primary.eventName, type: primary.eventType, scoring: primary.eventScoring });
+    setTournament({ id: primary.tournamentId, name: primary.tournamentName, source_format: primary.sourceFormat });
+
+    if (selectedStages.length === 1) {
+      const s = selectedStages[0];
+      setName(`${s.tournamentName} - ${s.eventName} - ${s.stageName}`);
+    } else {
+      const uniqueTournaments = [...new Set(selectedStages.map(s => s.tournamentName))];
+      const uniqueEvents = [...new Set(selectedStages.map(s => s.eventName))];
+      const label = uniqueTournaments.length === 1
+        ? `${uniqueTournaments[0]} - ${uniqueEvents.join(', ')}`
+        : uniqueTournaments.join(', ');
+      setName(label);
+    }
+
+    const stageIdsForPrimary = selectedStages.filter(s => s.eventId === primaryEventId).map(s => s.stageId);
+    await loadParticipants(primaryEventId, stageIdsForPrimary);
     setStep('filters');
   };
 
-  const loadParticipants = async (eventId, stageId) => {
-    // Get all event participants
+  const loadParticipants = async (eventId, stageIds) => {
     const { data: allParts } = await supabase
       .from('bg_participants')
       .select('id, number, name')
       .eq('event_id', eventId)
       .order('number');
 
-    if (!stageId || !allParts?.length) {
+    if (!stageIds?.length || !allParts?.length) {
       setParticipants(allParts || []);
       return;
     }
 
-    // Filter to participants who have results in this stage
     const { data: results } = await supabase
       .from('bg_board_results')
       .select('ns_participant_id, ew_participant_id')
-      .eq('stage_id', stageId);
+      .in('stage_id', stageIds);
 
     const activeIds = new Set();
     for (const r of (results || [])) {
@@ -122,7 +188,7 @@ export default function NewAnalysis({ userId, onBack, onCreated }) {
 
     const format = detectFormat(trimmed);
     if (!format) {
-      setError('Unrecognized format. Supported: BFI/Tournament Calculator, BridgeWebs, WBBridge, LoveBridge.');
+      setError('Unrecognized format. Supported: BFI/Tournament Calculator, BridgeWebs, LoveBridge.');
       return;
     }
 
@@ -131,10 +197,11 @@ export default function NewAnalysis({ userId, onBack, onCreated }) {
       return;
     }
 
-    setStatus('Scraping tournament data... This may take a few minutes.');
+    setStatus('Loading tournament data...');
     setStep('scraping');
 
     try {
+      // Scrape (idempotent — scrapers skip if data already exists)
       const resp = await fetch('/api/scrape', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -142,20 +209,100 @@ export default function NewAnalysis({ userId, onBack, onCreated }) {
       });
       const result = await resp.json();
       if (!resp.ok) {
-        setError(result.error || 'Scraping failed');
+        setError(result.error || 'Failed to load tournament');
         setStep('pick');
         return;
       }
 
-      // Reload tournaments to show newly scraped data
+      // Reload tournaments and auto-select the matching one
       await loadTournaments();
       setUrl('');
-      setStep('pick');
       setStatus('');
+
+      if (!isAdmin) {
+        autoSelectAndProceed(trimmed);
+      } else {
+        setStep('pick');
+      }
     } catch (e) {
       setError(e.message);
       setStep('pick');
     }
+  };
+
+  const autoSelectAndProceed = (submittedUrl) => {
+    // Find the tournament that matches the submitted URL by checking source_meta/source_url
+    setLoadingTournaments(true);
+    supabase
+      .from('bg_tournaments')
+      .select(`
+        id, name, location, date_start, source_format,
+        bg_events ( id, name, type, scoring, event_order,
+          bg_stages ( id, name, stage_order, source_url )
+        )
+      `)
+      .order('created_at', { ascending: false })
+      .then(({ data }) => {
+        const sorted = (data || []).map(t => ({
+          ...t,
+          bg_events: (t.bg_events || [])
+            .sort((a, b) => (a.event_order || 0) - (b.event_order || 0))
+            .map(e => ({
+              ...e,
+              bg_stages: (e.bg_stages || []).sort((a, b) => (a.stage_order || 0) - (b.stage_order || 0)),
+            })),
+        }));
+        setTournaments(sorted);
+        setLoadingTournaments(false);
+
+        // Find tournament with a stage whose source_url contains the submitted URL domain/path
+        let matched = null;
+        for (const t of sorted) {
+          for (const ev of t.bg_events || []) {
+            for (const stg of ev.bg_stages || []) {
+              if (stg.source_url && submittedUrl.includes(new URL(stg.source_url).hostname)) {
+                matched = t;
+                break;
+              }
+            }
+            if (matched) break;
+          }
+          if (matched) break;
+        }
+
+        // Fallback: pick the most recently created tournament
+        if (!matched && sorted.length > 0) matched = sorted[0];
+
+        if (matched) {
+          // Auto-select all stages in this tournament
+          const stages = [];
+          for (const ev of matched.bg_events || []) {
+            for (const stg of ev.bg_stages || []) {
+              stages.push({
+                tournamentId: matched.id, tournamentName: matched.name,
+                eventId: ev.id, eventName: ev.name, eventType: ev.type, eventScoring: ev.scoring,
+                stageId: stg.id, stageName: stg.name,
+                sourceFormat: matched.source_format,
+              });
+            }
+          }
+          setSelectedStages(stages);
+          if (stages.length > 0) {
+            // Auto-proceed to filters
+            const primary = stages[0];
+            setEvent({ id: primary.eventId, name: primary.eventName, type: primary.eventType, scoring: primary.eventScoring });
+            setTournament({ id: primary.tournamentId, name: primary.tournamentName, source_format: primary.sourceFormat });
+            setName(stages.length === 1
+              ? `${primary.tournamentName} - ${primary.eventName} - ${primary.stageName}`
+              : primary.tournamentName
+            );
+            const stageIdsForPrimary = stages.filter(s => s.eventId === primary.eventId).map(s => s.stageId);
+            loadParticipants(primary.eventId, stageIdsForPrimary).then(() => setStep('filters'));
+            return;
+          }
+        }
+        setStep('pick');
+      });
   };
 
   const toggleFilter = (f) => {
@@ -164,12 +311,6 @@ export default function NewAnalysis({ userId, onBack, onCreated }) {
     );
   };
 
-  const matchedPair = playerSearch.trim()
-    ? participants.find(p =>
-        p.name.toLowerCase().includes(playerSearch.trim().toLowerCase())
-      )
-    : null;
-
   const handleCreate = async () => {
     if (!name.trim()) { setError('Give your analysis a name.'); return; }
 
@@ -177,10 +318,20 @@ export default function NewAnalysis({ userId, onBack, onCreated }) {
     setError('');
 
     const filters = { mode: 'custom', active_filters: selectedFilters };
-    if (stage) {
-      filters.stage_id = stage.id;
-      filters.stage_name = stage.name;
+
+    filters.stage_ids = selectedStages.map(s => s.stageId);
+    filters.selections = selectedStages.map(s => ({
+      tournament_id: s.tournamentId, tournament_name: s.tournamentName,
+      event_id: s.eventId, event_name: s.eventName,
+      event_type: s.eventType, event_scoring: s.eventScoring,
+      stage_id: s.stageId, stage_name: s.stageName,
+    }));
+
+    if (selectedStages.length === 1) {
+      filters.stage_id = selectedStages[0].stageId;
+      filters.stage_name = selectedStages[0].stageName;
     }
+
     if (selectedTeam) {
       const team = participants.find(p => p.id === selectedTeam);
       filters.participant_id = selectedTeam;
@@ -223,7 +374,7 @@ export default function NewAnalysis({ userId, onBack, onCreated }) {
     onCreated(data);
   };
 
-  // ── Pick step: existing tournaments + URL input ────────────────
+  // ── Pick step ──────────────────────────────────────────────────
 
   if (step === 'pick') {
     return (
@@ -231,9 +382,11 @@ export default function NewAnalysis({ userId, onBack, onCreated }) {
         <Header onBack={onBack} title="Analyse New Game" />
         <div className="px-6 py-4 max-w-2xl space-y-4">
 
-          {/* Add new tournament via URL */}
-          <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <label className="block text-sm font-medium text-gray-700 mb-2">Add Tournament</label>
+          {/* Tournament URL input */}
+          <form className="bg-white border border-gray-200 rounded-lg p-4" noValidate onSubmit={(e) => { e.preventDefault(); handleUrlSubmit(); }}>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              {isAdmin ? 'Add Tournament' : 'Tournament URL'}
+            </label>
             <div className="flex gap-2">
               <input
                 type="text"
@@ -241,44 +394,54 @@ export default function NewAnalysis({ userId, onBack, onCreated }) {
                 onChange={(e) => setUrl(e.target.value)}
                 placeholder="Paste any URL from the tournament..."
                 className="flex-1 px-3 py-2 border border-gray-300 rounded text-sm"
-                onKeyDown={(e) => e.key === 'Enter' && handleUrlSubmit()}
               />
               <button
-                onClick={handleUrlSubmit}
+                type="submit"
                 disabled={!url.trim()}
                 className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50"
               >
-                Retrieve
+                {isAdmin ? 'Retrieve' : 'Go'}
               </button>
             </div>
             {error && <p className="text-sm text-red-600 mt-2">{error}</p>}
-          </div>
+          </form>
 
-          {/* Existing tournaments */}
-          <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Existing Tournaments
-            </label>
-            {loadingTournaments ? (
-              <p className="text-gray-400 text-sm py-4 text-center">Loading...</p>
-            ) : tournaments.length === 0 ? (
-              <p className="text-gray-400 text-sm py-4 text-center">
-                No tournaments yet. Paste a URL above to scrape one.
-              </p>
-            ) : (
-              <div className="space-y-1">
-                {tournaments.map(t => (
-                  <TournamentRow
-                    key={t.id}
-                    tournament={t}
-                    expanded={expandedTournament === t.id}
-                    onToggle={() => setExpandedTournament(expandedTournament === t.id ? null : t.id)}
-                    onStageSelect={(ev, stg) => handleStageSelect(ev, stg, t)}
-                  />
-                ))}
+          {/* Existing tournaments — admin only */}
+          {isAdmin && (
+            loadingTournaments ? (
+              <div className="bg-white border border-gray-200 rounded-lg p-4">
+                <p className="text-gray-400 text-sm py-4 text-center">Loading...</p>
               </div>
-            )}
-          </div>
+            ) : tournaments.length === 0 ? (
+              <div className="bg-white border border-gray-200 rounded-lg p-4">
+                <p className="text-gray-400 text-sm py-4 text-center">
+                  No tournaments yet. Paste a URL above to scrape one.
+                </p>
+              </div>
+            ) : (
+              <TypeGroupedList
+                tournaments={tournaments}
+                expandedTournaments={expandedTournaments}
+                setExpandedTournaments={setExpandedTournaments}
+                onStageToggle={handleStageToggle}
+                onEventToggle={handleEventToggle}
+                onTournamentToggle={handleTournamentToggle}
+                selectedStageIds={selectedStageIds}
+              />
+            )
+          )}
+
+          {/* Next button */}
+          {selectedStages.length > 0 && (
+            <div className="sticky bottom-4">
+              <button
+                onClick={proceedToFilters}
+                className="w-full px-4 py-3 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 shadow-lg"
+              >
+                Next — {selectedStages.length} stage{selectedStages.length !== 1 ? 's' : ''} selected
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -302,7 +465,7 @@ export default function NewAnalysis({ userId, onBack, onCreated }) {
 
   // ── Filters step ───────────────────────────────────────────────
 
-  const hasBidding = tournament?.source_format === 'lovebridge';
+  const hasBidding = selectedStages.some(s => s.sourceFormat === 'lovebridge');
 
   const teamFilters = [
     { key: 'diff_contract', label: 'Deals where the 2 tables were in different contracts' },
@@ -320,19 +483,37 @@ export default function NewAnalysis({ userId, onBack, onCreated }) {
 
   const availableFilters = isTeams ? teamFilters : pairFilters;
 
+  // Group selections for display
+  const selectionsByTournament = {};
+  for (const s of selectedStages) {
+    if (!selectionsByTournament[s.tournamentId]) {
+      selectionsByTournament[s.tournamentId] = { name: s.tournamentName, events: {} };
+    }
+    const t = selectionsByTournament[s.tournamentId];
+    if (!t.events[s.eventId]) {
+      t.events[s.eventId] = { name: s.eventName, type: s.eventType, scoring: s.eventScoring, stages: [] };
+    }
+    t.events[s.eventId].stages.push(s.stageName);
+  }
+
   return (
     <div className="min-h-screen bg-gray-100">
       <Header onBack={() => setStep('pick')} title="Analyse New Game" />
       <div className="px-6 py-4 max-w-2xl">
         <div className="bg-white border border-gray-200 rounded-lg p-5 space-y-4">
-          {/* Tournament + Event + Stage info */}
-          <div className="bg-gray-50 rounded px-3 py-2 text-sm">
-            <span className="font-medium">{tournament.name}</span>
-            <span className="text-gray-500 ml-2">{tournament.date_start || ''}</span>
-            <div className="text-gray-600">
-              {event.name} – {event.type === 'teams' ? 'TEAMS' : 'PAIRS'} ({event.scoring?.toUpperCase()})
-              {stage && <span className="font-medium text-gray-700 ml-1">· {stage.name}</span>}
-            </div>
+          {/* Selection summary */}
+          <div className="bg-gray-50 rounded px-3 py-2 text-sm space-y-1">
+            {Object.values(selectionsByTournament).map((t, i) => (
+              <div key={i}>
+                <span className="font-medium">{t.name}</span>
+                {Object.values(t.events).map((ev, j) => (
+                  <div key={j} className="text-gray-600 ml-3">
+                    {ev.name} – {ev.type === 'teams' ? 'TEAMS' : 'PAIRS'} ({ev.scoring?.toUpperCase()})
+                    <span className="font-medium text-gray-700 ml-1">· {ev.stages.join(', ')}</span>
+                  </div>
+                ))}
+              </div>
+            ))}
           </div>
 
           {/* Analysis name */}
@@ -347,35 +528,21 @@ export default function NewAnalysis({ userId, onBack, onCreated }) {
           </div>
 
           {/* Team / Pair selection */}
-          {isTeams ? (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Our Team</label>
-              <select
-                value={selectedTeam}
-                onChange={(e) => setSelectedTeam(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
-              >
-                <option value="">Select team...</option>
-                {participants.map(p => (
-                  <option key={p.id} value={p.id}>#{p.number} {p.name}</option>
-                ))}
-              </select>
-            </div>
-          ) : (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Our Pair</label>
-              <select
-                value={selectedTeam}
-                onChange={(e) => setSelectedTeam(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
-              >
-                <option value="">Select pair...</option>
-                {participants.map(p => (
-                  <option key={p.id} value={p.id}>#{p.number} {p.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              {isTeams ? 'Our Team' : 'Our Pair'}
+            </label>
+            <select
+              value={selectedTeam}
+              onChange={(e) => setSelectedTeam(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+            >
+              <option value="">{isTeams ? 'All teams' : 'All pairs'}</option>
+              {participants.map(p => (
+                <option key={p.id} value={p.id}>#{p.number} {p.name}</option>
+              ))}
+            </select>
+          </div>
 
           {/* Filters */}
           <div>
@@ -435,55 +602,129 @@ export default function NewAnalysis({ userId, onBack, onCreated }) {
 }
 
 
-function TournamentRow({ tournament, expanded, onToggle, onStageSelect }) {
+function TypeGroupedList({ tournaments, expandedTournaments, setExpandedTournaments, onStageToggle, onEventToggle, onTournamentToggle, selectedStageIds }) {
+  const groups = { teams: [], pairs: [] };
+
+  for (const t of tournaments) {
+    const teamsEvents = (t.bg_events || []).filter(e => e.type === 'teams');
+    const pairsEvents = (t.bg_events || []).filter(e => e.type !== 'teams');
+    if (teamsEvents.length) groups.teams.push({ ...t, bg_events: teamsEvents });
+    if (pairsEvents.length) groups.pairs.push({ ...t, bg_events: pairsEvents });
+  }
+
+  const sections = [
+    { key: 'teams', label: 'Teams', data: groups.teams },
+    { key: 'pairs', label: 'Pairs', data: groups.pairs },
+  ].filter(s => s.data.length > 0);
+
+  return (
+    <div className="space-y-4">
+      {sections.map(section => (
+        <div key={section.key} className="bg-white border border-gray-200 rounded-lg p-4">
+          <label className="block text-sm font-bold text-gray-700 mb-2">{section.label}</label>
+          <div className="space-y-1">
+            {section.data.map(t => (
+              <TournamentRow
+                key={`${section.key}-${t.id}`}
+                tournament={t}
+                expanded={!!expandedTournaments[`${section.key}-${t.id}`]}
+                onToggle={() => setExpandedTournaments(prev => ({ ...prev, [`${section.key}-${t.id}`]: !prev[`${section.key}-${t.id}`] }))}
+                onStageToggle={(ev, stg) => onStageToggle(ev, stg, t)}
+                onEventToggle={(ev) => onEventToggle(ev, t)}
+                onTournamentToggle={() => onTournamentToggle(t)}
+                selectedStageIds={selectedStageIds}
+              />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+
+function TournamentRow({ tournament, expanded, onToggle, onStageToggle, onEventToggle, onTournamentToggle, selectedStageIds }) {
   const t = tournament;
   const events = t.bg_events || [];
-  const [expandedEvent, setExpandedEvent] = useState(null);
+  const [expandedEvents, setExpandedEvents] = useState({});
 
   const typeLabel = (type) => type === 'teams' ? 'TEAMS' : 'PAIRS';
+
+  const totalStages = events.reduce((sum, ev) => sum + (ev.bg_stages || []).length, 0);
+  const tournamentSelectedCount = events.reduce((sum, ev) =>
+    sum + (ev.bg_stages || []).filter(s => selectedStageIds.has(s.id)).length, 0
+  );
+  const allChecked = totalStages > 0 && tournamentSelectedCount === totalStages;
+  const someChecked = tournamentSelectedCount > 0 && !allChecked;
 
   return (
     <div className="border border-gray-200 rounded-lg bg-white overflow-hidden">
       {/* Tournament header */}
-      <button
-        onClick={onToggle}
-        className="w-full text-left px-4 py-3 bg-gray-50 flex items-center justify-between hover:bg-gray-100"
-      >
-        <div className="flex items-baseline gap-1">
-          <span className="text-gray-400 text-xs mr-1">{expanded ? '▾' : '▸'}</span>
-          <span className="text-base font-bold text-gray-800">{t.name}</span>
-        </div>
-        {t.date_start && <span className="text-sm text-gray-500">{t.date_start}</span>}
-      </button>
+      <div className="flex items-center px-4 py-3 bg-gray-50 hover:bg-gray-100">
+        <input
+          type="checkbox"
+          checked={allChecked}
+          ref={el => { if (el) el.indeterminate = someChecked; }}
+          onChange={onTournamentToggle}
+          className="rounded mr-3 flex-shrink-0"
+        />
+        <button
+          onClick={onToggle}
+          className="flex-1 text-left flex items-center justify-between"
+        >
+          <div className="flex items-baseline gap-1">
+            <span className="text-gray-400 text-xs mr-1">{expanded ? '▾' : '▸'}</span>
+            <span className="text-base font-bold text-gray-800">{t.name}</span>
+          </div>
+          {t.date_start && <span className="text-sm text-gray-500">{t.date_start}</span>}
+        </button>
+      </div>
 
-      {/* Events (when tournament expanded) */}
+      {/* Events */}
       {expanded && events.map(ev => {
         const stages = ev.bg_stages || [];
-        const isEventExpanded = expandedEvent === ev.id;
+        const isEventExpanded = !!expandedEvents[ev.id];
+        const eventSelectedCount = stages.filter(s => selectedStageIds.has(s.id)).length;
+        const allChecked = stages.length > 0 && eventSelectedCount === stages.length;
+        const someChecked = eventSelectedCount > 0 && !allChecked;
 
         return (
           <div key={ev.id} className="border-t border-gray-200">
             {/* Event row */}
-            <button
-              onClick={() => setExpandedEvent(isEventExpanded ? null : ev.id)}
-              className="w-full text-left px-4 py-2.5 pl-10 hover:bg-gray-50 flex items-center justify-between"
-            >
-              <div className="flex items-baseline gap-1">
-                <span className="text-gray-400 text-xs mr-1">{isEventExpanded ? '▾' : '▸'}</span>
-                <span className="font-bold text-gray-700">{ev.name}</span>
-                <span className="text-sm text-gray-400 ml-1">– {typeLabel(ev.type)} ({ev.scoring?.toUpperCase()})</span>
-              </div>
-            </button>
-
-            {/* Stages (when event expanded) */}
-            {isEventExpanded && stages.map(stage => (
+            <div className="flex items-center px-4 py-2.5 pl-8 hover:bg-gray-50">
+              <input
+                type="checkbox"
+                checked={allChecked}
+                ref={el => { if (el) el.indeterminate = someChecked; }}
+                onChange={() => onEventToggle(ev)}
+                className="rounded mr-3 flex-shrink-0"
+              />
               <button
-                key={stage.id}
-                onClick={() => onStageSelect(ev, stage)}
-                className="w-full text-left pl-20 pr-4 py-2 hover:bg-blue-50 border-t border-gray-100 flex items-center"
+                onClick={() => setExpandedEvents(prev => ({ ...prev, [ev.id]: !prev[ev.id] }))}
+                className="flex-1 text-left flex items-center justify-between"
               >
-                <span className="font-semibold text-gray-600">{stage.name}</span>
+                <div className="flex items-baseline gap-1">
+                  <span className="text-gray-400 text-xs mr-1">{isEventExpanded ? '▾' : '▸'}</span>
+                  <span className="font-bold text-gray-700">{ev.name}</span>
+                  <span className="text-sm text-gray-400 ml-1">– {typeLabel(ev.type)} ({ev.scoring?.toUpperCase()})</span>
+                </div>
               </button>
+            </div>
+
+            {/* Stages */}
+            {isEventExpanded && stages.map(stage => (
+              <label
+                key={stage.id}
+                className="flex items-center pl-16 pr-4 py-2 hover:bg-blue-50 border-t border-gray-100 cursor-pointer"
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedStageIds.has(stage.id)}
+                  onChange={() => onStageToggle(ev, stage)}
+                  className="rounded mr-3"
+                />
+                <span className="font-semibold text-gray-600">{stage.name}</span>
+              </label>
             ))}
           </div>
         );

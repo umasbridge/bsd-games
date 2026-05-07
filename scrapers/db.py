@@ -150,6 +150,11 @@ def insert_boards(rows: list[dict]) -> dict:
     return {(r['round'], r['board_number']): r['id'] for r in all_data}
 
 
+def update_board_dd(board_id: str, dd: dict):
+    """Update a board row with DD data."""
+    get_client().table('bg_boards').update(dd).eq('id', board_id).execute()
+
+
 # ── Board results ────────────────────────────────────────────────
 
 def insert_board_results(rows: list[dict]):
