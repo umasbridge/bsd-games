@@ -782,10 +782,14 @@ def _scrape_stage(session, session_ids, tournament_id, event_id, dry_run=False):
     # Insert boards
     board_id_map = insert_boards(all_board_rows)
 
+    # Build board_number → board_id lookup (boards have round from round_offset)
+    board_num_to_id = {}
+    for (rnd, bn), bid in board_id_map.items():
+        board_num_to_id.setdefault(bn, bid)
+
     for result in all_result_rows:
         bn = result.pop('_board_number')
-        rnd = result.get('round')
-        result['board_id'] = board_id_map.get((rnd, bn))
+        result['board_id'] = board_num_to_id.get(bn)
 
     all_result_rows = [r for r in all_result_rows if r.get('board_id')]
 
