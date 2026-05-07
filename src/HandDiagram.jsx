@@ -3,7 +3,7 @@ import { useState } from 'react';
 const SUIT_SYM = { S: '♠', H: '♥', D: '♦', C: '♣' };
 const SUIT_CLR = { S: '#000', H: '#c62828', D: '#c62828', C: '#2e7d32' };
 
-export default function HandDiagram({ board, result, otherRoom, participantMap, ourParticipantId, onOtherRoom, onAnalysis, onTraveller, onNotes, notesLoading, isTeams, ddBest, optimalLines }) {
+export default function HandDiagram({ board, result, otherRoom, participantMap, ourParticipantId, onOtherRoom, onAnalysis, onTraveller, onNotes, notesLoading, isTeams, ddBest, optimalLines, boardNumber }) {
   const vul = board.vulnerability;
 
   const playerLabel = (dir) => {
@@ -53,7 +53,7 @@ export default function HandDiagram({ board, result, otherRoom, participantMap, 
   }
 
   const resultBar = result && (
-    <div style={{ fontSize: '0.85rem' }}>
+    <div style={{ fontSize: '0.75rem' }}>
       {!hasBidding && !result.passed_out && (
         <span style={{ fontWeight: 700 }}>
           {fmtContractColored(result)} <span style={{ color: '#6b7280', fontWeight: 400 }}>by {result.declarer}</span>
@@ -79,7 +79,7 @@ export default function HandDiagram({ board, result, otherRoom, participantMap, 
   );
 
   const optimalBlock = optimalLines && optimalLines.length > 0 && (
-    <div style={{ fontSize: '0.8rem', marginTop: 4 }}>
+    <div style={{ fontSize: '0.72rem', marginTop: 3 }}>
       {optimalLines.map((line, i) => {
         const c = line.contract;
         const otStr = c.ot > 0 ? `+${c.ot}` : c.ot < 0 ? `↓${Math.abs(c.ot)}` : '=';
@@ -89,7 +89,7 @@ export default function HandDiagram({ board, result, otherRoom, participantMap, 
         const sideImps = line.imps != null ? (line.label === 'NS' ? line.imps : -line.imps) : null;
         return (
           <div key={i} style={{ marginTop: i > 0 ? 2 : 0 }}>
-            <span style={{ color: '#92400e', fontWeight: 700, fontSize: '0.75rem' }}>Best for {line.label}: </span>
+            <span style={{ color: '#92400e', fontWeight: 700, fontSize: '0.68rem' }}>Best for {line.label}: </span>
             <span style={{ fontWeight: 600 }}>
               {c.level}<span style={{ color: SUIT_CLR[c.denom] || '#333' }}>{SUIT_SYM[c.denom] || c.denom}</span>{c.x}
             </span>
@@ -103,17 +103,17 @@ export default function HandDiagram({ board, result, otherRoom, participantMap, 
   );
 
   const buttonsBlock = (
-    <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+    <div style={{ display: 'flex', gap: 4, marginTop: 3 }}>
       {hasDDData(board) && <DDSPopup board={board} />}
       {onTraveller && (
         <button onClick={onTraveller}
-          style={{ fontSize: '0.75rem', padding: '2px 8px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>
+          style={{ fontSize: '0.65rem', padding: '2px 6px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer' }}>
           Traveller
         </button>
       )}
       {onNotes && (
         <button onClick={onNotes} disabled={notesLoading}
-          style={{ fontSize: '0.75rem', padding: '2px 8px', background: '#7c3aed', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', opacity: notesLoading ? 0.5 : 1 }}>
+          style={{ fontSize: '0.65rem', padding: '2px 6px', background: '#7c3aed', color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer', opacity: notesLoading ? 0.5 : 1 }}>
           {notesLoading ? '...' : 'My Notes'}
         </button>
       )}
@@ -125,13 +125,13 @@ export default function HandDiagram({ board, result, otherRoom, participantMap, 
       onClick={onOtherRoom}
       style={{
         border: '1px solid #d1d5db',
-        borderRadius: 6, padding: '6px 10px', marginTop: 6,
+        borderRadius: 5, padding: '4px 8px', marginTop: 4,
         cursor: onOtherRoom ? 'pointer' : 'default',
         background: '#fff',
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ fontWeight: 700, fontSize: '0.8rem', color: '#1e40af' }}>OTHER ROOM</span>
+        <span style={{ fontWeight: 700, fontSize: '0.72rem', color: '#1e40af' }}>OTHER ROOM</span>
         {onOtherRoom && <span style={{ fontSize: '1.1rem', fontWeight: 700, color: '#2563eb' }}>→</span>}
       </div>
       <div style={{ marginTop: 2 }}>
@@ -144,56 +144,91 @@ export default function HandDiagram({ board, result, otherRoom, participantMap, 
 
   return (
     <div>
-      {/* Mobile: compact layout — result bar, deal, analysis, buttons */}
-      <div className="md:hidden">
-        {resultBar}
-        <div style={{ marginTop: 4 }}>
-          <DealDiagram board={board} playerLabel={playerLabel} vul={vul} />
-        </div>
+      {/* Mobile: compact layout */}
+      <div className="md:hidden" style={{ fontSize: '0.75rem' }}>
+        {/* Contract + result */}
+        {result && !result.passed_out && (
+          <div style={{ fontWeight: 700, marginBottom: 2 }}>
+            {fmtContractColored(result)} <span style={{ color: '#6b7280', fontWeight: 400 }}>by {result.declarer}</span>
+            {' '}<span>{resultStr} ({scoreStr})</span>
+            {mpPct != null && <span style={{ marginLeft: 4, color: mpPct >= 60 ? '#15803d' : mpPct <= 40 ? '#dc2626' : '#6b7280' }}>{mpPct}%</span>}
+            {boardImps != null && <span style={{ marginLeft: 4, color: boardImps > 0 ? '#15803d' : boardImps < 0 ? '#dc2626' : '#6b7280' }}>{boardImps > 0 ? '+' : ''}{boardImps} IMPs</span>}
+            <span style={{ color: '#6b7280', marginLeft: 6 }}>Lead: {leadStr}</span>
+          </div>
+        )}
+
+        {/* Bidding (compact) */}
+        {hasBidding && <div style={{ marginBottom: 3 }}><BiddingTable lin={result.lin} dealer={board.dealer} compact /></div>}
+
+        {/* Deal diagram */}
+        <DealDiagram board={board} playerLabel={playerLabel} vul={vul} boardNumber={boardNumber} />
+
+        {/* Best for NS/EW */}
         {optimalBlock}
-        {otherRoomBlock}
-        {buttonsBlock}
+
+        {/* Other room */}
+        {isTeams && otherRoom && (
+          <div style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '3px 6px', marginTop: 3, fontSize: '0.7rem' }}>
+            <span style={{ fontWeight: 700, color: '#1e40af' }}>OTHER ROOM: </span>
+            {fmtContract(otherRoom)} by {otherRoom.declarer}
+            {' '}{otherRoom.overtricks != null ? (otherRoom.overtricks === 0 ? '= ' : otherRoom.overtricks > 0 ? `+${otherRoom.overtricks} ` : `${otherRoom.overtricks} `) : ' '}
+            ({otherRoom.score > 0 ? `+${otherRoom.score}` : `${otherRoom.score}`})
+          </div>
+        )}
+
+        {/* Buttons */}
+        <div style={{ display: 'flex', gap: 4, marginTop: 3 }}>
+          {hasDDData(board) && <DDSPopup board={board} />}
+          {onTraveller && (
+            <button onClick={onTraveller} style={{ fontSize: '0.65rem', padding: '2px 5px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer' }}>Traveller</button>
+          )}
+          {onNotes && (
+            <button onClick={onNotes} disabled={notesLoading} style={{ fontSize: '0.65rem', padding: '2px 5px', background: '#7c3aed', color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer', opacity: notesLoading ? 0.5 : 1 }}>{notesLoading ? '...' : 'Notes'}</button>
+          )}
+        </div>
       </div>
 
       {/* Desktop: side-by-side — left panel | deal diagram */}
-      <div className="hidden md:flex md:gap-5">
-        <div style={{ fontSize: '0.85rem', flex: '0 0 320px' }}>
-          {result?.lin && <BiddingTable lin={result.lin} dealer={board.dealer} />}
-          {result && (
-            <div style={{ border: '1px solid #e5e7eb', borderRadius: 6, padding: '6px 10px', marginTop: 6 }}>
-              {!hasBidding && !result.passed_out && (
-                <div style={{ fontWeight: 700, marginBottom: 2 }}>
-                  {fmtContractColored(result)} <span style={{ color: '#6b7280', fontWeight: 400 }}>by {result.declarer}</span>
+      <div className="hidden md:flex md:gap-3">
+        <div style={{ fontSize: '0.8rem', display: 'inline-block' }}>
+          <div style={{ display: 'inline-flex', flexDirection: 'column' }}>
+            {result?.lin && <BiddingTable lin={result.lin} dealer={board.dealer} />}
+            {result && (
+              <div style={{ border: '1px solid #e5e7eb', borderRadius: 5, padding: '4px 8px', marginTop: 4 }}>
+                {!hasBidding && !result.passed_out && (
+                  <div style={{ fontWeight: 700, marginBottom: 2 }}>
+                    {fmtContractColored(result)} <span style={{ color: '#6b7280', fontWeight: 400 }}>by {result.declarer}</span>
+                  </div>
+                )}
+                <div>
+                  <span style={{ color: '#6b7280' }}>Result: </span>
+                  <span style={{ fontWeight: 700 }}>{resultStr}</span>
+                  <span style={{ fontWeight: 700 }}> ({scoreStr})</span>
+                  {mpPct != null && (
+                    <span style={{ marginLeft: 6, fontWeight: 700, color: mpPct >= 60 ? '#15803d' : mpPct <= 40 ? '#dc2626' : '#6b7280' }}>
+                      {mpPct}%
+                    </span>
+                  )}
+                  {boardImps != null && (
+                    <span style={{ marginLeft: 6, fontWeight: 700, color: boardImps > 0 ? '#15803d' : boardImps < 0 ? '#dc2626' : '#6b7280' }}>
+                      {boardImps > 0 ? '+' : ''}{boardImps} IMPs
+                    </span>
+                  )}
                 </div>
-              )}
-              <div>
-                <span style={{ color: '#6b7280' }}>Result: </span>
-                <span style={{ fontWeight: 700 }}>{resultStr}</span>
-                <span style={{ fontWeight: 700 }}> ({scoreStr})</span>
-                {mpPct != null && (
-                  <span style={{ marginLeft: 6, fontWeight: 700, color: mpPct >= 60 ? '#15803d' : mpPct <= 40 ? '#dc2626' : '#6b7280' }}>
-                    {mpPct}%
-                  </span>
-                )}
-                {boardImps != null && (
-                  <span style={{ marginLeft: 6, fontWeight: 700, color: boardImps > 0 ? '#15803d' : boardImps < 0 ? '#dc2626' : '#6b7280' }}>
-                    {boardImps > 0 ? '+' : ''}{boardImps} IMPs
-                  </span>
-                )}
+                <div style={{ color: '#6b7280', marginTop: 2 }}>
+                  Lead: {leadStr}
+                </div>
               </div>
-              <div style={{ color: '#6b7280', marginTop: 2 }}>
-                Lead: {leadStr}
-              </div>
+            )}
+            <div style={{ marginTop: 3 }}>
+              {optimalBlock}
             </div>
-          )}
-          <div style={{ marginTop: 6 }}>
-            {optimalBlock}
+            {otherRoomBlock}
+            {buttonsBlock}
           </div>
-          {otherRoomBlock}
-          {buttonsBlock}
         </div>
         <div style={{ flex: 1 }}>
-          <DealDiagram board={board} playerLabel={playerLabel} vul={vul} />
+          <DealDiagram board={board} playerLabel={playerLabel} vul={vul} boardNumber={boardNumber} />
         </div>
       </div>
     </div>
@@ -201,17 +236,17 @@ export default function HandDiagram({ board, result, otherRoom, participantMap, 
 }
 
 
-function DealDiagram({ board, playerLabel, vul }) {
+function DealDiagram({ board, playerLabel, vul, boardNumber }) {
   return (
     <div style={{
       display: 'inline-grid',
       gridTemplateColumns: 'auto auto auto',
       gridTemplateRows: 'auto auto auto',
-      columnGap: 12,
-      rowGap: 4,
+      columnGap: 8,
+      rowGap: 2,
       alignItems: 'center',
       fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
-      fontSize: '0.9rem',
+      fontSize: '0.78rem',
       color: '#000',
     }}>
       <div style={{ gridColumn: 2, gridRow: 1, justifySelf: 'start' }}>
@@ -223,7 +258,7 @@ function DealDiagram({ board, playerLabel, vul }) {
         <HandBlock board={board} dir="w" />
       </div>
       <div style={{ gridColumn: 2, gridRow: 2, justifySelf: 'start' }}>
-        <Compass vul={vul} dealer={board.dealer} />
+        <Compass vul={vul} dealer={board.dealer} boardNumber={boardNumber} />
       </div>
       <div style={{ gridColumn: 3, gridRow: 2, justifySelf: 'start' }}>
         <PlayerLabel name={playerLabel('E')} dir="E" isDealer={board.dealer === 'E'} />
@@ -242,14 +277,14 @@ function PlayerLabel({ name, dir, isDealer }) {
   if (!name) return null;
   return (
     <div style={{
-      fontSize: '0.8rem',
+      fontSize: '0.7rem',
       color: isDealer ? '#fff' : '#555',
       fontWeight: 600,
       borderBottom: isDealer ? 'none' : '2px solid #333',
       background: isDealer ? '#2563eb' : 'transparent',
-      padding: isDealer ? '1px 6px' : '0 0 1px 0',
+      padding: isDealer ? '0px 4px' : '0 0 0px 0',
       borderRadius: isDealer ? 3 : 0,
-      marginBottom: 2,
+      marginBottom: 1,
       display: 'inline-block',
     }}>
       {name}
@@ -266,7 +301,7 @@ function HandBlock({ board, dir, align }) {
     { key: 'clubs', sym: '♣', cls: '#2e7d32' },
   ];
   return (
-    <div style={{ whiteSpace: 'nowrap', textAlign: align || 'left', lineHeight: 1.45 }}>
+    <div style={{ whiteSpace: 'nowrap', textAlign: align || 'left', lineHeight: 1.3 }}>
       {suits.map(s => {
         const cards = board[`${dir}_${s.key}`] || '—';
         return (
@@ -281,7 +316,7 @@ function HandBlock({ board, dir, align }) {
 }
 
 
-function Compass({ vul, dealer }) {
+function Compass({ vul, dealer, boardNumber }) {
   const nsVul = vul === 'ns' || vul === 'both';
   const ewVul = vul === 'ew' || vul === 'both';
 
@@ -289,15 +324,18 @@ function Compass({ vul, dealer }) {
     const isVul = (nsVul && (dir === 'N' || dir === 'S')) || (ewVul && (dir === 'E' || dir === 'W'));
     const bg = isVul ? '#c62828' : '#2e7d32';
     const decor = dir === dealer ? ' text-decoration="underline"' : '';
-    return `<circle cx="${cx}" cy="${cy}" r="13" fill="${bg}"/>` +
-           `<text x="${cx}" y="${cy + 5}" text-anchor="middle" fill="white" font-size="13" font-weight="bold"${decor}>${dir}</text>`;
+    return `<circle cx="${cx}" cy="${cy}" r="10" fill="${bg}"/>` +
+           `<text x="${cx}" y="${cy + 4}" text-anchor="middle" fill="white" font-size="10" font-weight="bold"${decor}>${dir}</text>`;
   };
 
-  const svg = `<svg width="72" height="72" viewBox="0 0 72 72">
-    ${ball('N', 36, 13)}
-    ${ball('W', 13, 36)}
-    ${ball('E', 59, 36)}
-    ${ball('S', 36, 59)}
+  const bn = boardNumber != null ? `<text x="28" y="32" text-anchor="middle" fill="#374151" font-size="12" font-weight="bold">${boardNumber}</text>` : '';
+
+  const svg = `<svg width="56" height="56" viewBox="0 0 56 56">
+    ${ball('N', 28, 10)}
+    ${ball('W', 10, 28)}
+    ${bn}
+    ${ball('E', 46, 28)}
+    ${ball('S', 28, 46)}
   </svg>`;
 
   return <div dangerouslySetInnerHTML={{ __html: svg }} />;
@@ -306,7 +344,7 @@ function Compass({ vul, dealer }) {
 
 // ── Bidding table ────────────────────────────────────────────────
 
-function BiddingTable({ lin, dealer }) {
+function BiddingTable({ lin, dealer, compact }) {
   const bids = parseBiddingFromLin(lin);
   if (!bids || bids.length === 0) return null;
 
@@ -329,13 +367,17 @@ function BiddingTable({ lin, dealer }) {
   }
   if (currentRow.some(c => c !== null)) rows.push(currentRow);
 
+  const cellPad = compact ? '1px 2px' : '1px 4px';
+  const fontSize = compact ? '0.7rem' : '0.75rem';
+  const headSize = compact ? '0.65rem' : '0.7rem';
+
   return (
-    <div style={{ border: '1px solid #e5e7eb', borderRadius: 6, padding: 6 }}>
-      <table style={{ borderCollapse: 'collapse', fontSize: '0.85rem', width: '100%' }}>
+    <div style={{ border: '1px solid #e5e7eb', borderRadius: 6, padding: compact ? 3 : 4, display: 'inline-block' }}>
+      <table style={{ borderCollapse: 'collapse', fontSize, width: '100%' }}>
         <thead>
           <tr style={{ borderBottom: '1px solid #d1d5db' }}>
             {dirs.map(d => (
-              <th key={d} style={{ padding: '2px 8px', textAlign: 'center', fontWeight: 700, color: '#374151' }}>
+              <th key={d} style={{ padding: compact ? '1px 6px' : '1px 10px', textAlign: 'center', fontWeight: 700, color: '#374151', fontSize: headSize }}>
                 {d}
               </th>
             ))}
@@ -345,8 +387,8 @@ function BiddingTable({ lin, dealer }) {
           {rows.map((row, i) => (
             <tr key={i}>
               {row.map((cell, j) => (
-                <td key={j} style={{ padding: '2px 8px', textAlign: 'center' }}>
-                  {cell === null ? '' : formatBidCell(cell)}
+                <td key={j} style={{ padding: compact ? '1px 6px' : '1px 10px', textAlign: 'center' }}>
+                  {cell === null ? '' : formatBidCell(cell, compact)}
                 </td>
               ))}
             </tr>
@@ -368,16 +410,17 @@ function parseBiddingFromLin(lin) {
   return bids.length > 0 ? bids : null;
 }
 
-function formatBidCell(bid) {
+function formatBidCell(bid, compact) {
   if (!bid) return '';
-  if (bid === 'P') return <span style={{ color: '#15803d' }}>Pass</span>;
-  if (bid === 'X') return <span style={{ color: '#dc2626', fontWeight: 700 }}>X</span>;
-  if (bid === 'XX') return <span style={{ color: '#2563eb', fontWeight: 700 }}>XX</span>;
+  const sz = compact ? '0.75rem' : '0.85rem';
+  if (bid === 'P') return <span style={{ color: '#15803d', fontSize: sz }}>Pass</span>;
+  if (bid === 'X') return <span style={{ color: '#dc2626', fontWeight: 700, fontSize: sz }}>X</span>;
+  if (bid === 'XX') return <span style={{ color: '#2563eb', fontWeight: 700, fontSize: sz }}>XX</span>;
   const level = bid[0];
   const ds = bid.substring(1);
   const map = { C: ['♣','#2e7d32'], D: ['♦','#c62828'], H: ['♥','#c62828'], S: ['♠','#000'], NT: ['NT','#333'], N: ['NT','#333'] };
   const [sym, col] = map[ds] || [ds, '#333'];
-  return <span style={{ fontSize: '1.05rem' }}>{level}<span style={{ color: col, fontWeight: 700 }}>{sym}</span></span>;
+  return <span style={{ fontSize: sz }}>{level}<span style={{ color: col, fontWeight: 700 }}>{sym}</span></span>;
 }
 
 
@@ -387,9 +430,9 @@ function DDSPopup({ board }) {
   const [open, setOpen] = useState(false);
   const DENOMS = ['C', 'D', 'H', 'S', 'NT'];
   return (
-    <div style={{ position: 'relative', display: 'inline-block', marginTop: 4 }}>
+    <div style={{ position: 'relative', display: 'inline-block' }}>
       <button onClick={() => setOpen(!open)}
-        style={{ fontSize: '0.75rem', padding: '2px 8px', background: '#0d9488', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>
+        style={{ fontSize: '0.65rem', padding: '2px 6px', background: '#0d9488', color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer' }}>
         DDS
       </button>
       {open && (

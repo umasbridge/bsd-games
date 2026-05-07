@@ -135,13 +135,13 @@ export default function AnalysisView({ supabase: sbProp, analysis, userId, onBac
   return (
     <div className="bg-white min-h-screen">
       {/* Header */}
-      <div className="border-b border-gray-200 px-4 py-3 flex items-center gap-3">
-        <button onClick={onBack} className="px-2 py-1 text-sm border border-gray-300 rounded hover:bg-gray-50">
+      <div className="border-b border-gray-200 px-3 py-2 flex items-center gap-2">
+        <button onClick={onBack} className="px-2 py-0.5 text-xs border border-gray-300 rounded hover:bg-gray-50">
           &larr; Back
         </button>
         <div>
-          <h1 className="text-lg font-bold">{analysis.name}</h1>
-          <p className="text-sm text-gray-500">
+          <h1 className="text-sm font-bold">{analysis.name}</h1>
+          <p className="text-xs text-gray-500">
             {filters.stage_ids?.length > 1
               ? `${filters.stage_ids.length} stages · ${displayRows.length} boards`
               : `${tournament?.name} · ${displayRows.length} boards`
@@ -639,14 +639,10 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
   }
 
   return (
-    <div className="border-b border-gray-200 relative">
-      <div className="flex">
-        <div className="flex-shrink-0 w-12 flex items-start justify-center pt-3">
-          <div className="text-lg font-bold text-gray-700">{row.board.board_number}</div>
-        </div>
-
-        <div className="flex-1">
-          <div className="px-3 py-2">
+    <div className="border-b-2 border-gray-400 relative mb-3 pb-2">
+      <div>
+        <div>
+          <div className="px-2 py-1">
             <HandDiagram
               board={row.board}
               result={row.result}
@@ -659,6 +655,7 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
               onOtherRoom={isTeams && row.otherRoom ? () => setPopup(popup === 'otherroom' ? null : 'otherroom') : undefined}
               onAnalysis={undefined}
               onTraveller={boardResults.length > 1 ? () => setPopup(popup === 'traveller' ? null : 'traveller') : undefined}
+              boardNumber={row.board.board_number}
               onNotes={supabase ? () => handleOpenNotes() : undefined}
               notesLoading={notesLoading}
             />

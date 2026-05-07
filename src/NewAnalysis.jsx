@@ -347,22 +347,33 @@ export default function NewAnalysis({ supabase: sbProp, userId, isAdmin, onBack,
 
     const participantId = selectedTeam || null;
 
-    const { data, error: dbErr } = await supabase
-      .from('bsd_game_analyses')
-      .insert({
-        user_id: userId,
-        name: name.trim(),
-        event_id: event.id,
-        participant_id: participantId,
-        filters,
-      })
-      .select(`
-        id, name, filters, created_at, updated_at, user_id, participant_id,
-        bg_events ( id, name, type, scoring,
-          bg_tournaments ( id, name, date_start, location, source_format )
-        )
-      `)
-      .single();
+    let data, dbErr;
+    try {
+      const result = await supabase
+        .from('bsd_game_analyses')
+        .insert({
+          user_id: userId,
+          name: name.trim(),
+          event_id: event.id,
+          participant_id: participantId,
+          filters,
+        })
+        .select(`
+          id, name, filters, created_at, updated_at, user_id, participant_id,
+          bg_events ( id, name, type, scoring,
+            bg_tournaments ( id, name, date_start, location, source_format )
+          )
+        `)
+        .single();
+      data = result.data;
+      dbErr = result.error;
+    } catch (e) {
+      setSaving(false);
+      setError(`${e.name}: ${e.message}`);
+      console.error('Create analysis error:', e);
+      console.log('Insert payload:', { user_id: userId, event_id: event.id, participant_id: participantId, name: name.trim() });
+      return;
+    }
 
     setSaving(false);
 
