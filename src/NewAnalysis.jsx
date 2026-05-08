@@ -207,7 +207,15 @@ export default function NewAnalysis({ supabase: sbProp, userId, isAdmin, onBack,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: trimmed }),
       });
-      const result = await resp.json();
+      const text = await resp.text();
+      let result;
+      try {
+        result = JSON.parse(text);
+      } catch {
+        setError(`Server error (${resp.status}): scraper endpoint not available`);
+        setStep('pick');
+        return;
+      }
       if (!resp.ok) {
         setError(result.error || 'Failed to load tournament');
         setStep('pick');

@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/scrape.py": {
+      "maxDuration": 300
+    }
+  }
+}
