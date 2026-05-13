@@ -1,21 +1,14 @@
 import { useState, useRef } from 'react';
 import AnalysisList from '../src/AnalysisList.jsx';
 import NewAnalysis from '../src/NewAnalysis.jsx';
+import RetrieveDeals from '../src/RetrieveDeals.jsx';
+import OpenConfig from '../src/OpenConfig.jsx';
 import AnalysisView from '../src/AnalysisView.jsx';
 
-/**
- * Game Analysis module — called from bsd-app when "My Games" is clicked.
- *
- * @param {object} props.supabase - Supabase client instance (shared with bsd-app)
- * @param {string} props.userId - Current user ID
- * @param {string} props.userEmail - Current user email
- * @param {boolean} props.isAdmin - Whether user is admin (controls tournament list visibility)
- * @param {function} props.onBack - Back navigation handler
- * @param {React.ComponentType} props.Header - Header component from bsd-app
- */
 export default function GameAnalysis({ supabase, userId, userEmail, isAdmin, onLogout, onBack, Header, DiscussionView }) {
   const [view, setView] = useState('list');
   const [activeAnalysis, setActiveAnalysis] = useState(null);
+  const [retrievedTournament, setRetrievedTournament] = useState(null);
   const displayRowsCache = useRef({});
 
   if (view === 'new') {
@@ -23,9 +16,42 @@ export default function GameAnalysis({ supabase, userId, userEmail, isAdmin, onL
       <NewAnalysis
         supabase={supabase}
         userId={userId}
-        isAdmin={isAdmin}
         onBack={() => setView('list')}
         onCreated={(analysis) => {
+          setActiveAnalysis(analysis);
+          setView('view');
+        }}
+      />
+    );
+  }
+
+  if (view === 'retrieve') {
+    return (
+      <RetrieveDeals
+        supabase={supabase}
+        onBack={() => setView('list')}
+        onRetrieved={(tournament) => {
+          setRetrievedTournament(tournament);
+          setView('open-config');
+        }}
+      />
+    );
+  }
+
+  if (view === 'open-config') {
+    return (
+      <OpenConfig
+        supabase={supabase}
+        userId={userId}
+        analysis={retrievedTournament ? null : activeAnalysis}
+        tournament={retrievedTournament}
+        onBack={() => {
+          setRetrievedTournament(null);
+          setActiveAnalysis(null);
+          setView('list');
+        }}
+        onProceed={(analysis) => {
+          setRetrievedTournament(null);
           setActiveAnalysis(analysis);
           setView('view');
         }}
@@ -53,7 +79,12 @@ export default function GameAnalysis({ supabase, userId, userEmail, isAdmin, onL
       userEmail={userEmail}
       isAdmin={isAdmin}
       onNew={() => setView('new')}
-      onOpen={(analysis) => { setActiveAnalysis(analysis); setView('view'); }}
+      onRetrieve={() => setView('retrieve')}
+      onOpen={(analysis) => {
+        setActiveAnalysis(analysis);
+        setRetrievedTournament(null);
+        setView('open-config');
+      }}
       onLogout={onLogout}
       onBack={onBack}
       Header={Header}

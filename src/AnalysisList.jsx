@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase as defaultSupabase } from './supabase.js';
 import { buildTeamRows, buildPairRows } from './AnalysisView.jsx';
 
-export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAdmin, onNew, onOpen, onLogout, onBack, Header, displayRowsCache }) {
+export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAdmin, onNew, onRetrieve, onOpen, onLogout, onBack, Header, displayRowsCache }) {
   const sb = sbProp || defaultSupabase;
   const [analyses, setAnalyses] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -146,25 +146,33 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
   return (
     <div className="min-h-screen bg-gray-100">
       {Header ? (
-        <Header title="My Games" userEmail={userEmail} onLogout={onLogout} onBack={handleBack} />
+        <Header title="My Deal Sets" userEmail={userEmail} onLogout={onLogout} onBack={handleBack} />
       ) : (
         <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <button onClick={handleBack} className="px-2 py-1 text-sm border border-gray-300 rounded hover:bg-gray-50">
               &larr; Dashboard
             </button>
-            <h1 className="text-lg font-bold">My Games</h1>
+            <h1 className="text-lg font-bold">My Deal Sets</h1>
           </div>
         </div>
       )}
 
       <div className="px-6 py-4">
         <div className="flex gap-3 items-center mb-4">
+          {isAdmin && (
+            <button
+              onClick={onNew}
+              className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
+            >
+              Create Deal Set
+            </button>
+          )}
           <button
-            onClick={onNew}
-            className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
+            onClick={onRetrieve}
+            className="px-4 py-2 bg-green-600 text-white rounded text-sm hover:bg-green-700"
           >
-            Analyse New Game
+            Retrieve Played Deals
           </button>
         </div>
 
@@ -172,7 +180,7 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
           <p className="text-gray-400 py-8 text-center">Loading...</p>
         ) : analyses.length === 0 ? (
           <div className="bg-white border border-gray-200 rounded-lg p-8 text-center text-gray-400">
-            No game analyses yet. Click "Analyse New Game" to get started.
+            No deal sets yet. Click "Retrieve Played Deals" to get started.
           </div>
         ) : (
           <div className="space-y-2">

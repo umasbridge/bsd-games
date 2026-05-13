@@ -161,24 +161,32 @@ def fetch_session(session_id):
             parts = session_id.split('_')
             server_id = parts[0] if parts else session_id
             segment_id = parts[1] if len(parts) >= 2 else None
-            segment_name = f'{server_id}_{segment_id}' if segment_id else session_id
+            played_count = len([b for b in boards if b.get('played')])
+            bpr = played_count or len(boards)
+            tournament_name = server_id.upper()
+
+            # Default to TEAM/IMP for non-archived sessions
+            event_type = 'TEAM'
+            calc_type = 'IMP'
+            type_label = 'Teams'
+
             return {
                 'miniSessionId': session_id,
                 'name': session_id,
-                'tournamentName': server_id.upper(),
+                'tournamentName': tournament_name,
                 'tournamentId': None,
-                'eventName': segment_name,
+                'eventName': f'{tournament_name} {type_label}',
                 'eventId': segment_id,
                 'eventOrder': None,
-                'segmentName': segment_name,
+                'segmentName': f'Match ({bpr} boards)',
                 'segmentId': segment_id,
                 'segmentOrder': None,
-                'type': 'TEAM',
-                'calcType': 'IMP',
+                'type': event_type,
+                'calcType': calc_type,
                 'arrangeType': None,
                 'location': '',
                 'serverId': server_id,
-                'boardsPerRound': len(boards),
+                'boardsPerRound': bpr,
                 'numberOfRounds': 1,
                 'startDateTime': '',
             }
@@ -208,14 +216,14 @@ def build_event_data(session, tournament_id):
     calc = session.get('calcType', 'IMP')
     event_name = session.get('eventName') or session.get('segmentName') or 'Main'
 
-    # For non-archived sessions, build a descriptive name:
-    # <tournament> - <segment_id> - <type>
-    if not session.get('tournamentId') and event_name and '_' in event_name:
-        tournament_name = session.get('tournamentName') or ''
-        segment_id = session.get('segmentId') or ''
+    # For non-archived sessions, the eventName is already set to
+    # "{SERVER} Teams" or "{SERVER} Pairs" by fetch_session fallback.
+    # Only override if it still has the raw server_segment format.
+    if not session.get('tournamentId') and event_name and '_' in event_name and event_name.count('_') >= 1:
         scoring_label = calc.upper() if calc else 'IMP'
         type_label = 'Teams' if tt == 'TEAM' else 'Pairs'
-        event_name = f'{type_label} ({scoring_label}) · {segment_id}'
+        tournament_name = session.get('tournamentName') or ''
+        event_name = f'{tournament_name} {type_label}' if tournament_name else f'{type_label} ({scoring_label})'
 
     return {
         'tournament_id': tournament_id,
@@ -232,10 +240,8 @@ def build_event_data(session, tournament_id):
 def build_stage_data(session, event_id, source_url):
     """Build bg_stages row from miniSession."""
     stage_name = session.get('segmentName') or session.get('name') or 'Main'
-    # For non-archived sessions with generic names, include boards/rounds info
-    if not session.get('tournamentId') and stage_name and '_' in stage_name:
-        bpr = session.get('boardsPerRound', '')
-        stage_name = f'{stage_name} ({bpr} boards)' if bpr else stage_name
+    # For non-archived sessions, segmentName is already set to "Match (N boards)"
+    # by fetch_session fallback. No further transformation needed.
 
     return {
         'event_id': event_id,
@@ -747,6 +753,11 @@ def _scrape_stage(session, session_ids, tournament_id, event_id, dry_run=False):
     stage_data = build_stage_data(session, event_id, source_url)
     if len(session_ids) > 1:
         stage_data['source_meta']['session_ids'] = session_ids
+        # Update stage name with total boards when multiple sessions are discovered
+        bpr = session.get('boardsPerRound', 0)
+        if bpr and not session.get('tournamentId'):
+            total = bpr * len(session_ids)
+            stage_data['name'] = f'Match ({total} boards, {len(session_ids)} segments)'
         stage_data['number_of_rounds'] = len(session_ids)
 
     if dry_run:

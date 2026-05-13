@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabase.js';
 import AnalysisList from './AnalysisList.jsx';
 import NewAnalysis from './NewAnalysis.jsx';
+import RetrieveDeals from './RetrieveDeals.jsx';
+import OpenConfig from './OpenConfig.jsx';
 import AnalysisView from './AnalysisView.jsx';
 
 export default function App() {
@@ -9,6 +11,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState('list');
   const [activeAnalysis, setActiveAnalysis] = useState(null);
+  const [retrievedTournament, setRetrievedTournament] = useState(null);
   const displayRowsCache = useRef({});
 
   useEffect(() => {
@@ -28,9 +31,40 @@ export default function App() {
     return (
       <NewAnalysis
         userId={userId}
-        isAdmin={true}
         onBack={() => setView('list')}
         onCreated={(analysis) => {
+          setActiveAnalysis(analysis);
+          setView('view');
+        }}
+      />
+    );
+  }
+
+  if (view === 'retrieve') {
+    return (
+      <RetrieveDeals
+        onBack={() => setView('list')}
+        onRetrieved={(tournament) => {
+          setRetrievedTournament(tournament);
+          setView('open-config');
+        }}
+      />
+    );
+  }
+
+  if (view === 'open-config') {
+    return (
+      <OpenConfig
+        userId={userId}
+        analysis={retrievedTournament ? null : activeAnalysis}
+        tournament={retrievedTournament}
+        onBack={() => {
+          setRetrievedTournament(null);
+          setActiveAnalysis(null);
+          setView('list');
+        }}
+        onProceed={(analysis) => {
+          setRetrievedTournament(null);
           setActiveAnalysis(analysis);
           setView('view');
         }}
@@ -54,7 +88,12 @@ export default function App() {
       userId={userId}
       isAdmin={true}
       onNew={() => setView('new')}
-      onOpen={(analysis) => { setActiveAnalysis(analysis); setView('view'); }}
+      onRetrieve={() => setView('retrieve')}
+      onOpen={(analysis) => {
+        setActiveAnalysis(analysis);
+        setRetrievedTournament(null);
+        setView('open-config');
+      }}
       displayRowsCache={displayRowsCache.current}
     />
   );
