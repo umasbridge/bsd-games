@@ -119,6 +119,22 @@ def parse_pages(xml_text):
 
 # ── Parse players (view=6) ────────────────────────────────────────
 
+def _parse_pair_key(s):
+    """Parse a pair identifier that may have a section prefix (e.g. 'A1' → ('A1', 1)).
+    Section letters offset the number: A=0, B=100, C=200, etc. to avoid collisions.
+    """
+    s = s.strip()
+    if not s:
+        return None, None
+    m = re.match(r'^([A-Za-z]?)(\d+)$', s)
+    if m:
+        prefix = m.group(1).upper()
+        num = int(m.group(2))
+        offset = (ord(prefix) - ord('A')) * 100 if prefix else 0
+        return s, offset + num
+    return s, None
+
+
 def parse_players(pages):
     """Extract player list from view=6 pages."""
     players = {}
@@ -133,12 +149,11 @@ def parse_players(pages):
             display_pair = parts[3].strip()
             name1 = parts[4].strip().lstrip('.,')
             name2 = parts[5].strip().lstrip('.,')
-            try:
-                pair_num = int(display_pair)
-            except ValueError:
+            pair_key, pair_num = _parse_pair_key(display_pair)
+            if pair_key is None:
                 continue
-            players[pair_num] = {
-                'number': pair_num,
+            players[pair_key] = {
+                'number': pair_num or 0,
                 'name1': name1,
                 'name2': name2,
                 'name': f'{name1} & {name2}',
@@ -358,23 +373,27 @@ def scrape(url, dry_run=False):
         print(f'  Stage: {stage_id}')
 
     # Insert participants (linked to event)
+    # player_data is keyed by display string (e.g. "A1"), number is the int part
     participant_rows = []
-    for pnum, pdata in sorted(player_data.items()):
+    key_to_number = {}
+    for pkey, pdata in sorted(player_data.items()):
         participant_rows.append({
             'event_id': event_id,
-            'number': pnum,
+            'number': pdata['number'],
             'name': pdata['name'],
             'roster': [
                 {'name': pdata['name1'], 'player_id': ''},
                 {'name': pdata['name2'], 'player_id': ''},
             ],
         })
+        key_to_number[pkey] = pdata['number']
 
     if dry_run:
-        participant_map = {p['number']: f'id-{p["number"]}' for p in participant_rows}
+        participant_map = {pkey: f'id-{pkey}' for pkey in player_data}
     else:
         print(f'  Inserting {len(participant_rows)} participants...')
-        participant_map = insert_participants(participant_rows)
+        num_to_id = insert_participants(participant_rows)
+        participant_map = {pkey: num_to_id.get(num) for pkey, num in key_to_number.items()}
 
     # Parse boards and results
     board_rows = []
@@ -439,8 +458,10 @@ def scrape(url, dry_run=False):
                     if len(parts) < 8:
                         continue
 
-                    ns_pair = int(parts[0].strip()) if parts[0].strip() else 0
-                    ew_pair = int(parts[1].strip()) if parts[1].strip() else 0
+                    ns_key, _ = _parse_pair_key(parts[0])
+                    ew_key, _ = _parse_pair_key(parts[1])
+                    if not ns_key or not ew_key:
+                        continue
                     contract_str = parts[2].strip()
                     declarer = parts[3].strip().upper()
                     lead_str = parts[4].strip()
@@ -458,8 +479,8 @@ def scrape(url, dry_run=False):
                         result_rows.append({
                             'board_id': None, 'stage_id': stage_id,
                             '_board_number': bn,
-                            'ns_participant_id': participant_map.get(ns_pair),
-                            'ew_participant_id': participant_map.get(ew_pair),
+                            'ns_participant_id': participant_map.get(ns_key),
+                            'ew_participant_id': participant_map.get(ew_key),
                             'match_id': None, 'contract': None,
                             'contract_level': None, 'contract_denom': None,
                             'contract_x': None, 'declarer': None,
@@ -472,13 +493,13 @@ def scrape(url, dry_run=False):
                             'datum_ns': None, 'datum_ew': None,
                             'room': None, 'round': None,
                             'table_number': None,
-                            'player_n_name': player_data.get(ns_pair, {}).get('name1'),
+                            'player_n_name': player_data.get(ns_key, {}).get('name1'),
                             'player_n_id': None,
-                            'player_s_name': player_data.get(ns_pair, {}).get('name2'),
+                            'player_s_name': player_data.get(ns_key, {}).get('name2'),
                             'player_s_id': None,
-                            'player_e_name': player_data.get(ew_pair, {}).get('name1'),
+                            'player_e_name': player_data.get(ew_key, {}).get('name1'),
                             'player_e_id': None,
-                            'player_w_name': player_data.get(ew_pair, {}).get('name2'),
+                            'player_w_name': player_data.get(ew_key, {}).get('name2'),
                             'player_w_id': None,
                             'lin': None, 'remarks': None,
                         })
@@ -511,8 +532,8 @@ def scrape(url, dry_run=False):
                     mp_ns = _parse_float(mp_ns_str)
                     mp_ew = _parse_float(mp_ew_str)
 
-                    ns_p = player_data.get(ns_pair, {})
-                    ew_p = player_data.get(ew_pair, {})
+                    ns_p = player_data.get(ns_key, {})
+                    ew_p = player_data.get(ew_key, {})
 
                     lin = generate_lin(
                         dealer=dealer, vulnerability=vul, hands=hands,
@@ -526,8 +547,8 @@ def scrape(url, dry_run=False):
                     result_rows.append({
                         'board_id': None, 'stage_id': stage_id,
                         '_board_number': bn,
-                        'ns_participant_id': participant_map.get(ns_pair),
-                        'ew_participant_id': participant_map.get(ew_pair),
+                        'ns_participant_id': participant_map.get(ns_key),
+                        'ew_participant_id': participant_map.get(ew_key),
                         'match_id': None,
                         'contract': contract, 'contract_level': contract_level,
                         'contract_denom': contract_denom, 'contract_x': contract_x,
