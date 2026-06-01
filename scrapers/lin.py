@@ -83,12 +83,29 @@ def generate_lin(*, dealer, vulnerability, hands, contract_level=None,
     vul_code = _VUL_TO_LIN.get(vulnerability, 'o')
     parts.append(f'sv|{vul_code}')
 
-    # Bidding
+    # Bidding — align with dealer using direction info from each bid
     if bidding:
-        bids = []
-        for b in bidding:
-            bids.append(b.get('bid', 'P'))
-        parts.append(f'mb|{"".join(bids)}')
+        first_dir = (bidding[0].get('dir') or '').strip().upper()
+        if first_dir in _DIR_ORDER:
+            dealer_idx = _DIR_ORDER.index(dealer) if dealer in _DIR_ORDER else 0
+            bids = []
+            bid_idx = 0
+            pos = dealer_idx
+            for _ in range(4 * (len(bidding) + 1)):
+                if bid_idx >= len(bidding):
+                    break
+                expected = _DIR_ORDER[pos % 4]
+                bid_dir = (bidding[bid_idx].get('dir') or '').strip().upper()
+                if bid_dir == expected:
+                    bids.append(bidding[bid_idx].get('bid', 'P'))
+                    bid_idx += 1
+                else:
+                    bids.append('P')
+                pos += 1
+            parts.append(f'mb|{"".join(bids)}')
+        else:
+            bids = [b.get('bid', 'P') for b in bidding]
+            parts.append(f'mb|{"".join(bids)}')
     elif passed_out:
         parts.append('mb|pppp')
     elif contract_level and contract_denom and declarer:
