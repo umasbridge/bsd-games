@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase as defaultSupabase } from './supabase.js';
 
 export default function OpenConfig({ supabase: sbProp, userId, analysis, tournament: retrievedTournament, onBack, onProceed }) {
@@ -13,6 +13,17 @@ export default function OpenConfig({ supabase: sbProp, userId, analysis, tournam
   const [selectedStageIds, setSelectedStageIds] = useState(new Set());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [searchText, setSearchText] = useState('');
+  const [showDropdown, setShowDropdown] = useState(false);
+  const dropdownRef = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setShowDropdown(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
 
   useEffect(() => {
     if (isNew && retrievedTournament) {
@@ -44,6 +55,7 @@ export default function OpenConfig({ supabase: sbProp, userId, analysis, tournam
     const filters = a.filters || {};
     setName(a.name);
     setSelectedTeam(filters.participant_id || '');
+    if (filters.participant_name) setSearchText(`#${filters.participant_number || ''} ${filters.participant_name}`);
 
     const existingStageIds = new Set(filters.stage_ids || (filters.stage_id ? [filters.stage_id] : []));
     setSelectedStageIds(existingStageIds);
@@ -283,20 +295,45 @@ export default function OpenConfig({ supabase: sbProp, userId, analysis, tournam
           </div>
 
           {/* Team / Pair selection */}
-          <div>
+          <div className="relative" ref={dropdownRef}>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               {isTeams ? 'Our Team' : 'Our Pair'}
             </label>
-            <select
-              value={selectedTeam}
-              onChange={(e) => setSelectedTeam(e.target.value)}
+            <input
+              type="text"
+              value={searchText}
+              onChange={(e) => { setSearchText(e.target.value); setShowDropdown(true); setSelectedTeam(''); }}
+              onFocus={() => setShowDropdown(true)}
+              placeholder={isTeams ? 'All teams — type to search' : 'All pairs — type to search'}
               className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
-            >
-              <option value="">{isTeams ? 'All teams' : 'All pairs'}</option>
-              {participants.map(p => (
-                <option key={p.id} value={p.id}>#{p.number} {p.name}</option>
-              ))}
-            </select>
+            />
+            {selectedTeam && (
+              <button
+                onClick={() => { setSelectedTeam(''); setSearchText(''); }}
+                className="absolute right-2 top-8 text-gray-400 hover:text-gray-600 text-sm"
+              >✕</button>
+            )}
+            {showDropdown && !selectedTeam && (() => {
+              const q = searchText.toLowerCase();
+              const filtered = q
+                ? participants.filter(p => p.name.toLowerCase().includes(q) || String(p.number).includes(q))
+                : participants;
+              if (filtered.length === 0 && q) return <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded shadow-lg max-h-48 overflow-auto"><div className="px-3 py-2 text-sm text-gray-400">No matches</div></div>;
+              if (filtered.length === 0) return null;
+              return (
+                <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded shadow-lg max-h-48 overflow-auto">
+                  {filtered.map(p => (
+                    <div
+                      key={p.id}
+                      onClick={() => { setSelectedTeam(p.id); setSearchText(`#${p.number} ${p.name}`); setShowDropdown(false); }}
+                      className="px-3 py-2 text-sm hover:bg-blue-50 cursor-pointer"
+                    >
+                      #{p.number} {p.name}
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
 
           {/* Stage selection (only if multiple stages) */}
