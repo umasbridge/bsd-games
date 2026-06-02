@@ -23,8 +23,8 @@ from xml.etree import ElementTree
 from utils import hand_hcp, contract_display, compute_dd
 from lin import generate_lin
 from db import (
-    upsert_tournament, upsert_event, insert_stage,
-    insert_participants, insert_boards,
+    upsert_tournament, upsert_event, upsert_stage,
+    insert_participants, find_participants, insert_boards,
     insert_board_results, stage_exists, update_board_dd,
 )
 
@@ -369,7 +369,7 @@ def scrape(url, dry_run=False):
         print(f'  Event: {event_id}')
 
         stage_data_template['event_id'] = event_id
-        stage_id = insert_stage(stage_data_template)
+        stage_id = upsert_stage(stage_data_template)
         print(f'  Stage: {stage_id}')
 
     # Insert participants (linked to event)
@@ -391,8 +391,14 @@ def scrape(url, dry_run=False):
     if dry_run:
         participant_map = {pkey: f'id-{pkey}' for pkey in player_data}
     else:
-        print(f'  Inserting {len(participant_rows)} participants...')
-        num_to_id = insert_participants(participant_rows)
+        existing = find_participants(event_id)
+        new_rows = [r for r in participant_rows if r['number'] not in existing]
+        if new_rows:
+            print(f'  Inserting {len(new_rows)} participants ({len(existing)} existing)...')
+            num_to_id = {**existing, **insert_participants(new_rows)}
+        else:
+            print(f'  {len(existing)} participants already exist, skipping insert.')
+            num_to_id = existing
         participant_map = {pkey: num_to_id.get(num) for pkey, num in key_to_number.items()}
 
     # Parse boards and results
