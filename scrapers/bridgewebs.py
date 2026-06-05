@@ -348,9 +348,13 @@ def scrape(url, dry_run=False):
         'source_meta': {'club': club, 'event': event},
     }
 
+    session_num = re.search(r'_(\d+)$', event)
+    stage_name = f'Session {session_num.group(1)}' if session_num else 'Session'
+    stage_order = int(session_num.group(1)) if session_num else 1
+
     stage_data_template = {
-        'name': 'Session',
-        'stage_order': 1,
+        'name': stage_name,
+        'stage_order': stage_order,
         'source_url': source_url,
         'source_meta': {'club': club, 'event': event},
     }
