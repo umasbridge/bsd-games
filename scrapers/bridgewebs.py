@@ -548,15 +548,12 @@ def _parse_session_data(board_pages, stage_id, player_data, participant_map, sco
                     tricks, overtricks = parse_tricks_bw(tricks_str, contract_level)
 
                     score = 0
-                    if ns_score_str:
-                        try:
-                            score = int(ns_score_str)
-                        except ValueError:
-                            pass
-                    elif ew_score_str:
+                    try:
+                        score = int(ns_score_str)
+                    except (ValueError, TypeError):
                         try:
                             score = -int(ew_score_str)
-                        except ValueError:
+                        except (ValueError, TypeError):
                             pass
 
                     pts_ns = _parse_float(mp_ns_str)
