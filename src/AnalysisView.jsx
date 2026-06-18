@@ -562,12 +562,9 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
           }
           if (maxT < 7) continue;
 
-          // Find the level that maximizes score
-          let bestScore = -Infinity, bestLevel = 0;
-          for (let level = 1; level <= maxT - 6; level++) {
-            const sc = computeScore(level, denom, maxT, ourVul, isMinor);
-            if (sc > bestScore) { bestScore = sc; bestLevel = level; }
-          }
+          // Use highest makeable level (e.g. 8 tricks in NT → 2NT=, not 1NT+1)
+          const bestLevel = maxT - 6;
+          const bestScore = computeScore(bestLevel, denom, maxT, ourVul, isMinor);
 
           if (bestScore > ddOptimalForUs) {
             const nsScore = ourSideIsNs ? bestScore : -bestScore;
