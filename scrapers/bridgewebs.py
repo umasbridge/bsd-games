@@ -85,6 +85,135 @@ def fetch_travs_xml(club, event):
     return fetch_xml(club, event, 'xml_results_travs')
 
 
+def detect_scoring(club, event):
+    """Detect if an event uses IMP or MP scoring from the rank XML.
+    MP events have non-zero Score % values; IMP events show 0.
+    """
+    try:
+        xml_text = fetch_rank_xml(club, event)
+        decoded = xml_text.replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&')
+        rows = re.findall(r'<tr[^>]*>(.*?)</tr>', decoded, re.DOTALL)
+        for row in rows[1:4]:
+            cells = re.findall(r'<td[^>]*>(.*?)</td>', row, re.DOTALL)
+            if len(cells) >= 5:
+                score_pct = cells[4].strip().replace('&nbsp;', '').replace('\xa0', '')
+                try:
+                    if float(score_pct) > 0:
+                        return 'mp'
+                except ValueError:
+                    continue
+        return 'imp'
+    except Exception:
+        return 'mp'
+
+
+def fetch_event_title(club, event):
+    """Fetch result_title and club_name from the display_rank page.
+    Returns (result_title, club_name) — e.g.
+      ('1st June 2026 - EA TNBA - Morning', 'EXPRESS AVENUE BRIDGE TOURNAMENT RESULT')
+    """
+    url = (f'https://www.bridgewebs.com/cgi-bin/bwor/bw.cgi'
+           f'?pid=display_rank&event={event}&club={club}')
+    req = urllib.request.Request(url, headers={
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+        'Accept': '*/*',
+    })
+    with urllib.request.urlopen(req, context=_ssl_ctx) as resp:
+        html = resp.read().decode('utf-8')
+
+    result_title = None
+    club_name = None
+    m = re.search(r"var result_title = '([^']*)'", html)
+    if m:
+        result_title = m.group(1).strip()
+    m = re.search(r"var club_name = '([^']*)'", html)
+    if m:
+        club_name = m.group(1).strip()
+    return result_title, club_name
+
+
+def _strip_date_prefix(title):
+    """Strip the leading date and HTML tags from a result_title.
+    '11th June 2026<br>MP Pairs - Session 1' → 'MP Pairs - Session 1'
+    '1st June 2026 - EA TNBA - Morning' → 'EA TNBA - Morning'
+    """
+    if not title:
+        return title
+    t = re.sub(r'<br\s*/?>', ' - ', title)
+    m = re.match(r'^\d{1,2}(?:st|nd|rd|th)?\s+\w+\s+\d{4}\s*-\s*', t)
+    if m:
+        return t[m.end():].strip()
+    return t
+
+
+def discover_sessions(club, date_str):
+    """Discover all sessions for a club on a given date.
+    Probes event keys date_1, date_2, ... until no board data is returned.
+    Returns list of dicts: {event_key, title, pages, board_pages}.
+    """
+    sessions = []
+    for n in range(1, 20):
+        event_key = f'{date_str}_{n}'
+        xml_text = fetch_travs_xml(club, event_key)
+        pages = parse_pages(xml_text)
+        board_pages = [p for p in pages if p.get('view') == '3']
+        if not board_pages:
+            break
+
+        result_title, club_name = fetch_event_title(club, event_key)
+        session_name = _strip_date_prefix(result_title) or f'Session {n}'
+        scoring = detect_scoring(club, event_key) if n == 1 else sessions[0].get('scoring', 'mp')
+
+        sessions.append({
+            'event_key': event_key,
+            'session_num': n,
+            'title': session_name,
+            'scoring': scoring,
+            'club_name': club_name,
+            'pages': pages,
+            'board_pages': board_pages,
+        })
+        print(f'  Found session {n}: {session_name} ({len(board_pages)} boards)')
+
+    return sessions
+
+
+def _derive_names(sessions):
+    """Derive event name and stage names from session titles.
+    Returns (event_name, stage_names).
+
+    ['...Matchpoint Pairs - Session 1', '...Matchpoint Pairs - Session 2']
+      → ('Matchpoint Pairs', ['Session 1', 'Session 2'])
+    ['EA TNBA - Morning', 'EA TNBA - Afternoon']
+      → ('EA TNBA', ['Morning', 'Afternoon'])
+    """
+    titles = [s['title'] for s in sessions]
+
+    if len(sessions) <= 1:
+        return titles[0], titles
+
+    prefix = titles[0]
+    for t in titles[1:]:
+        while prefix and not t.startswith(prefix):
+            prefix = prefix[:-1]
+
+    prefix = prefix.rstrip(' -–—')
+    if len(prefix) < 3:
+        return titles[0], titles
+
+    event_name = prefix.strip()
+    stripped = [t[len(prefix):].lstrip(' -–—').strip() or t for t in titles]
+    if any(not s for s in stripped):
+        return event_name, titles
+    # If all stripped names are just numbers, keep more context
+    if all(s.isdigit() for s in stripped):
+        m = re.search(r'(\S+)\s*[-–—]?\s*$', prefix)
+        if m:
+            stripped = [f'{m.group(1)} {s}' for s in stripped]
+            event_name = prefix[:m.start()].rstrip(' -–—').strip() or event_name
+    return event_name, stripped
+
+
 # ── Parse XML helpers ─────────────────────────────────────────────
 
 def parse_pages(xml_text):
@@ -292,120 +421,12 @@ def parse_tricks_bw(tricks_str, contract_level):
             return None, None
 
 
-# ── Main scrape logic ─────────────────────────────────────────────
+# ── Parse a single session's boards and results ─────────────────
 
-def scrape(url, dry_run=False):
-    """Scrape a BridgeWebs event and write to Supabase.
-
-    Hierarchy: bg_tournaments → bg_events → bg_stages → bg_boards → bg_board_results
+def _parse_session_data(board_pages, stage_id, player_data, participant_map, scoring='mp'):
+    """Parse board and result rows from a session's board pages.
+    Returns (board_rows, result_rows, errors).
     """
-    club, event = parse_bridgewebs_url(url)
-    print(f'Club: {club}, Event: {event}')
-
-    source_url = f'https://www.bridgewebs.com/cgi-bin/bwor/bw.cgi?pid=display_rank&event={event}&club={club}'
-
-    if not dry_run and stage_exists(source_url):
-        print('  Event already scraped. Skipping.')
-        return
-
-    # Fetch all traveller data (single call gets everything)
-    print('Fetching traveller data...')
-    xml_text = fetch_travs_xml(club, event)
-    pages = parse_pages(xml_text)
-    print(f'  Parsed {len(pages)} pages')
-
-    # Parse players
-    player_data = parse_players(pages)
-    print(f'  Found {len(player_data)} pairs')
-
-    # Parse boards (view=3 pages)
-    board_pages = [p for p in pages if p.get('view') == '3']
-    print(f'  Found {len(board_pages)} boards')
-
-    if not board_pages:
-        print('  No board data found.')
-        return
-
-    event_date = _event_date(event)
-    tournament_name = f'{club.upper()} {event_date or event}'
-
-    # ── Create hierarchy: tournament → event → stage ──
-
-    tournament_data = {
-        'name': tournament_name,
-        'location': None,
-        'date_start': event_date,
-        'source_format': 'bridgewebs',
-        'source_meta': {'club': club},
-    }
-
-    event_data_template = {
-        'name': 'Pairs',
-        'type': 'pairs',
-        'scoring': 'mp',
-        'event_order': 1,
-        'source_url': source_url,
-        'source_meta': {'club': club, 'event': event},
-    }
-
-    session_num = re.search(r'_(\d+)$', event)
-    stage_name = f'Session {session_num.group(1)}' if session_num else 'Session'
-    stage_order = int(session_num.group(1)) if session_num else 1
-
-    stage_data_template = {
-        'name': stage_name,
-        'stage_order': stage_order,
-        'source_url': source_url,
-        'source_meta': {'club': club, 'event': event},
-    }
-
-    if dry_run:
-        print(f'\n[DRY RUN] Tournament: {tournament_name}')
-        tournament_id = 'dry-run-t'
-        event_id = 'dry-run-e'
-        stage_id = 'dry-run-s'
-    else:
-        tournament_id = upsert_tournament(tournament_data)
-        print(f'  Tournament: {tournament_id}')
-
-        event_data_template['tournament_id'] = tournament_id
-        event_id = upsert_event(event_data_template)
-        print(f'  Event: {event_id}')
-
-        stage_data_template['event_id'] = event_id
-        stage_id = upsert_stage(stage_data_template)
-        print(f'  Stage: {stage_id}')
-
-    # Insert participants (linked to event)
-    # player_data is keyed by display string (e.g. "A1"), number is the int part
-    participant_rows = []
-    key_to_number = {}
-    for pkey, pdata in sorted(player_data.items()):
-        participant_rows.append({
-            'event_id': event_id,
-            'number': pdata['number'],
-            'name': pdata['name'],
-            'roster': [
-                {'name': pdata['name1'], 'player_id': ''},
-                {'name': pdata['name2'], 'player_id': ''},
-            ],
-        })
-        key_to_number[pkey] = pdata['number']
-
-    if dry_run:
-        participant_map = {pkey: f'id-{pkey}' for pkey in player_data}
-    else:
-        existing = find_participants(event_id)
-        new_rows = [r for r in participant_rows if r['number'] not in existing]
-        if new_rows:
-            print(f'  Inserting {len(new_rows)} participants ({len(existing)} existing)...')
-            num_to_id = {**existing, **insert_participants(new_rows)}
-        else:
-            print(f'  {len(existing)} participants already exist, skipping insert.')
-            num_to_id = existing
-        participant_map = {pkey: num_to_id.get(num) for pkey, num in key_to_number.items()}
-
-    # Parse boards and results
     board_rows = []
     result_rows = []
     errors = []
@@ -419,7 +440,6 @@ def scrape(url, dry_run=False):
             dealer = DEALER_MAP_BW.get(page.get('dlr', '1'), 'N')
             vul = VUL_MAP_BW.get(page.get('vul', '1'), 'none')
 
-            # Parse hand
             hand_field = page.get('hand', '')
             hands = {}
             hcp = {}
@@ -461,7 +481,6 @@ def scrape(url, dry_run=False):
                 'optimal_score': optimal_score,
             })
 
-            # Parse traveller rows
             for row in page.get('rows', []):
                 try:
                     parts = row.split(';')
@@ -497,9 +516,10 @@ def scrape(url, dry_run=False):
                             'passed_out': True,
                             'lead': None, 'lead_suit': None, 'lead_rank': None,
                             'tricks': 0, 'overtricks': None, 'score': 0,
-                            'mp_ns': _parse_float(mp_ns_str),
-                            'mp_ew': _parse_float(mp_ew_str),
-                            'imps_ns': None, 'imps_ew': None,
+                            'mp_ns': _parse_float(mp_ns_str) if scoring != 'imp' else None,
+                            'mp_ew': _parse_float(mp_ew_str) if scoring != 'imp' else None,
+                            'imps_ns': _parse_float(mp_ns_str) if scoring == 'imp' else None,
+                            'imps_ew': _parse_float(mp_ew_str) if scoring == 'imp' else None,
                             'datum_ns': None, 'datum_ew': None,
                             'room': None, 'round': None,
                             'table_number': None,
@@ -539,8 +559,15 @@ def scrape(url, dry_run=False):
                         except ValueError:
                             pass
 
-                    mp_ns = _parse_float(mp_ns_str)
-                    mp_ew = _parse_float(mp_ew_str)
+                    pts_ns = _parse_float(mp_ns_str)
+                    pts_ew = _parse_float(mp_ew_str)
+
+                    if scoring == 'imp':
+                        mp_ns, mp_ew = None, None
+                        imps_ns, imps_ew = pts_ns, pts_ew
+                    else:
+                        mp_ns, mp_ew = pts_ns, pts_ew
+                        imps_ns, imps_ew = None, None
 
                     ns_p = player_data.get(ns_key, {})
                     ew_p = player_data.get(ew_key, {})
@@ -567,7 +594,7 @@ def scrape(url, dry_run=False):
                         'tricks': tricks, 'overtricks': overtricks,
                         'score': score,
                         'mp_ns': mp_ns, 'mp_ew': mp_ew,
-                        'imps_ns': None, 'imps_ew': None,
+                        'imps_ns': imps_ns, 'imps_ew': imps_ew,
                         'datum_ns': None, 'datum_ew': None,
                         'room': None, 'round': None,
                         'table_number': None,
@@ -588,49 +615,181 @@ def scrape(url, dry_run=False):
         except Exception as e:
             errors.append(f'Page: {e}')
 
-    if dry_run:
-        print(f'\n[DRY RUN] Summary:')
-        print(f'  Boards: {len(board_rows)}')
-        print(f'  Results: {len(result_rows)}')
-        if errors:
-            print(f'  Errors: {len(errors)}')
-            for e in errors[:5]:
-                print(f'    {e}')
+    return board_rows, result_rows, errors
+
+
+# ── Main scrape logic ─────────────────────────────────────────────
+
+def scrape(url, dry_run=False):
+    """Scrape all sessions of a BridgeWebs tournament and write to Supabase.
+
+    Given any URL from a tournament, discovers all sibling sessions on the same
+    date (probing _1, _2, _3...) and scrapes them under one tournament with
+    intelligently named stages.
+
+    Hierarchy: bg_tournaments → bg_events → bg_stages → bg_boards → bg_board_results
+    """
+    club, event = parse_bridgewebs_url(url)
+    date_str = re.match(r'(\d{8})', event).group(1)
+    event_date = _event_date(event)
+    print(f'Club: {club}, Date: {event_date}')
+
+    # ── Discover all sessions for this date ──
+    print('Discovering sessions...')
+    sessions = discover_sessions(club, date_str)
+
+    if not sessions:
+        print('  No sessions found.')
         return
 
-    print(f'Inserting {len(board_rows)} boards...')
-    board_id_map = insert_boards(board_rows)
+    # ── Determine tournament, event, and stage names ──
+    club_display = sessions[0]['club_name'] or club.upper()
+    tournament_name = f'{club_display} - {event_date}' if event_date else club_display
+    event_name, stage_names = _derive_names(sessions)
 
-    # Compute DD data for boards missing it
-    needs_dd = [b for b in board_rows if b.get('dd_n_nt') is None]
-    if needs_dd:
-        print(f'Computing DD for {len(needs_dd)} boards...')
-        dd_count = 0
-        for b in needs_dd:
-            dd = compute_dd(b)
-            if dd:
-                board_id = board_id_map.get((b.get('round'), b['board_number']))
-                if board_id:
-                    update_board_dd(board_id, dd)
-                    dd_count += 1
-        print(f'  Updated {dd_count} boards with DD data')
+    print(f'\nTournament: {tournament_name}')
+    print(f'Event: {event_name}')
+    for sess, sname in zip(sessions, stage_names):
+        print(f'  Stage: {sname} ({len(sess["board_pages"])} boards)')
 
-    for result in result_rows:
-        bn = result.pop('_board_number')
-        result['board_id'] = board_id_map.get((None, bn))
+    # ── Create tournament and event (once for all sessions) ──
+    source_url = f'https://www.bridgewebs.com/cgi-bin/bwor/bw.cgi?pid=display_rank&event={sessions[0]["event_key"]}&club={club}'
 
-    result_rows = [r for r in result_rows if r.get('board_id')]
+    tournament_data = {
+        'name': tournament_name,
+        'location': None,
+        'date_start': event_date,
+        'source_format': 'bridgewebs',
+        'source_meta': {'club': club},
+    }
 
-    print(f'Inserting {len(result_rows)} board results...')
-    insert_board_results(result_rows)
+    event_data_template = {
+        'name': event_name,
+        'type': 'pairs',
+        'scoring': sessions[0].get('scoring', 'mp'),
+        'event_order': 1,
+        'source_url': source_url,
+        'source_meta': {'club': club, 'event_keys': [s['event_key'] for s in sessions]},
+    }
 
-    print(f'\nDone!')
-    print(f'  Tournament: {tournament_name}')
-    print(f'  Boards: {len(board_rows)}')
-    print(f'  Results: {len(result_rows)}')
-    if errors:
-        print(f'  Errors ({len(errors)}):')
-        for e in errors[:10]:
+    if dry_run:
+        print(f'\n[DRY RUN] Tournament: {tournament_name}')
+        tournament_id = 'dry-run-t'
+        event_id = 'dry-run-e'
+    else:
+        tournament_id = upsert_tournament(tournament_data)
+        print(f'\n  Tournament ID: {tournament_id}')
+
+        event_data_template['tournament_id'] = tournament_id
+        event_id = upsert_event(event_data_template)
+        print(f'  Event ID: {event_id}')
+
+    # ── Scrape each session as a stage ──
+    total_boards = 0
+    total_results = 0
+    all_errors = []
+
+    for sess, stage_name in zip(sessions, stage_names):
+        ek = sess['event_key']
+        stage_source_url = f'https://www.bridgewebs.com/cgi-bin/bwor/bw.cgi?pid=display_rank&event={ek}&club={club}'
+
+        print(f'\n── {stage_name} ({ek}) ──')
+
+        if not dry_run and stage_exists(stage_source_url):
+            print('  Already scraped. Skipping.')
+            continue
+
+        player_data = parse_players(sess['pages'])
+        print(f'  {len(player_data)} pairs')
+
+        stage_data = {
+            'name': stage_name,
+            'stage_order': sess['session_num'],
+            'source_url': stage_source_url,
+            'source_meta': {'club': club, 'event': ek},
+        }
+
+        if dry_run:
+            stage_id = f'dry-run-s{sess["session_num"]}'
+            participant_map = {pkey: f'id-{pkey}' for pkey in player_data}
+        else:
+            stage_data['event_id'] = event_id
+            stage_id = upsert_stage(stage_data)
+            print(f'  Stage ID: {stage_id}')
+
+            # Insert participants
+            participant_rows = []
+            key_to_number = {}
+            for pkey, pdata in sorted(player_data.items()):
+                participant_rows.append({
+                    'event_id': event_id,
+                    'number': pdata['number'],
+                    'name': pdata['name'],
+                    'roster': [
+                        {'name': pdata['name1'], 'player_id': ''},
+                        {'name': pdata['name2'], 'player_id': ''},
+                    ],
+                })
+                key_to_number[pkey] = pdata['number']
+
+            existing = find_participants(event_id)
+            new_rows = [r for r in participant_rows if r['number'] not in existing]
+            if new_rows:
+                print(f'  Inserting {len(new_rows)} participants ({len(existing)} existing)...')
+                num_to_id = {**existing, **insert_participants(new_rows)}
+            else:
+                print(f'  {len(existing)} participants already exist.')
+                num_to_id = existing
+            participant_map = {pkey: num_to_id.get(num) for pkey, num in key_to_number.items()}
+
+        # Parse boards and results
+        board_rows, result_rows, errors = _parse_session_data(
+            sess['board_pages'], stage_id, player_data, participant_map,
+            scoring=sessions[0].get('scoring', 'mp'))
+
+        if dry_run:
+            print(f'  [DRY RUN] {len(board_rows)} boards, {len(result_rows)} results')
+            total_boards += len(board_rows)
+            total_results += len(result_rows)
+            all_errors.extend(errors)
+            continue
+
+        print(f'  Inserting {len(board_rows)} boards...')
+        board_id_map = insert_boards(board_rows)
+
+        needs_dd = [b for b in board_rows if b.get('dd_n_nt') is None]
+        if needs_dd:
+            print(f'  Computing DD for {len(needs_dd)} boards...')
+            dd_count = 0
+            for b in needs_dd:
+                dd_data = compute_dd(b)
+                if dd_data:
+                    board_id = board_id_map.get((b.get('round'), b['board_number']))
+                    if board_id:
+                        update_board_dd(board_id, dd_data)
+                        dd_count += 1
+            print(f'  Updated {dd_count} boards with DD data')
+
+        for result in result_rows:
+            bn = result.pop('_board_number')
+            result['board_id'] = board_id_map.get((None, bn))
+
+        result_rows = [r for r in result_rows if r.get('board_id')]
+
+        print(f'  Inserting {len(result_rows)} board results...')
+        insert_board_results(result_rows)
+
+        total_boards += len(board_rows)
+        total_results += len(result_rows)
+        all_errors.extend(errors)
+
+    print(f'\nDone! Tournament: {tournament_name}')
+    print(f'  Sessions: {len(sessions)}')
+    print(f'  Total boards: {total_boards}')
+    print(f'  Total results: {total_results}')
+    if all_errors:
+        print(f'  Errors ({len(all_errors)}):')
+        for e in all_errors[:10]:
             print(f'    {e}')
 
 

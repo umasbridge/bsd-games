@@ -319,8 +319,9 @@ export default function NewAnalysis({ supabase: sbProp, userId, onBack, onCreate
     { key: 'suboptimal', label: 'Deals where we were in a suboptimal contract' },
   ];
 
+  const isImpPairs = !isTeams && event?.scoring === 'imp';
   const pairFilters = [
-    { key: 'low_pct', label: `Deals with score below %`, hasInput: true, inputValue: pctThreshold, onInput: setPctThreshold, inputPlaceholder: '40' },
+    { key: 'low_pct', label: isImpPairs ? `Deals with score below IMPs` : `Deals with score below %`, hasInput: true, inputValue: pctThreshold, onInput: setPctThreshold, inputPlaceholder: '40' },
     { key: 'suboptimal', label: 'Deals where we were in a suboptimal contract' },
   ];
 

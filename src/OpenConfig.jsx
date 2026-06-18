@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase as defaultSupabase } from './supabase.js';
 
-export default function OpenConfig({ supabase: sbProp, userId, analysis, tournament: retrievedTournament, onBack, onProceed }) {
+export default function OpenConfig({ supabase: sbProp, userId, analysis, tournament: retrievedTournament, selectedStages: selectedStagesProp, onBack, onProceed }) {
   const supabase = sbProp || defaultSupabase;
   const isNew = !analysis;
 
@@ -16,6 +16,9 @@ export default function OpenConfig({ supabase: sbProp, userId, analysis, tournam
   const [searchText, setSearchText] = useState('');
   const [showDropdown, setShowDropdown] = useState(false);
   const dropdownRef = useRef(null);
+  const [selectedFilters, setSelectedFilters] = useState([]);
+  const [impThreshold, setImpThreshold] = useState('5');
+  const [pctThreshold, setPctThreshold] = useState('40');
 
   useEffect(() => {
     const handler = (e) => {
@@ -26,7 +29,9 @@ export default function OpenConfig({ supabase: sbProp, userId, analysis, tournam
   }, []);
 
   useEffect(() => {
-    if (isNew && retrievedTournament) {
+    if (selectedStagesProp?.length) {
+      initFromSelection(selectedStagesProp);
+    } else if (isNew && retrievedTournament) {
       initFromRetrieval(retrievedTournament);
     } else if (analysis) {
       initFromExisting(analysis);
@@ -51,11 +56,55 @@ export default function OpenConfig({ supabase: sbProp, userId, analysis, tournam
     setLoading(false);
   };
 
+  const initFromSelection = async (stages) => {
+    const eventCounts = {};
+    for (const s of stages) eventCounts[s.eventId] = (eventCounts[s.eventId] || 0) + 1;
+    const primaryEventId = Object.entries(eventCounts).sort((a, b) => b[1] - a[1])[0][0];
+    const primary = stages.find(s => s.eventId === primaryEventId);
+
+    // Build a tournament-like object for display
+    const stageIds = new Set(stages.map(s => s.stageId));
+    const { data: tournData } = await supabase
+      .from('bg_tournaments')
+      .select(`
+        id, name, location, date_start, source_format,
+        bg_events ( id, name, type, scoring, event_order,
+          bg_stages ( id, name, stage_order )
+        )
+      `)
+      .eq('id', primary.tournamentId)
+      .single();
+
+    if (tournData) {
+      const sorted = {
+        ...tournData,
+        bg_events: (tournData.bg_events || [])
+          .sort((a, b) => (a.event_order || 0) - (b.event_order || 0))
+          .map(e => ({
+            ...e,
+            bg_stages: (e.bg_stages || []).sort((a, b) => (a.stage_order || 0) - (b.stage_order || 0)),
+          })),
+      };
+      setTournament(sorted);
+    }
+
+    setSelectedStageIds(stageIds);
+
+    setName('');
+
+    const stageIdsForPrimary = stages.filter(s => s.eventId === primaryEventId).map(s => s.stageId);
+    await loadParticipants(primaryEventId, stageIdsForPrimary);
+    setLoading(false);
+  };
+
   const initFromExisting = async (a) => {
     const filters = a.filters || {};
     setName(a.name);
     setSelectedTeam(filters.participant_id || '');
     if (filters.participant_name) setSearchText(`#${filters.participant_number || ''} ${filters.participant_name}`);
+    setSelectedFilters(filters.active_filters || []);
+    if (filters.imp_threshold) setImpThreshold(String(filters.imp_threshold));
+    if (filters.pct_threshold) setPctThreshold(String(filters.pct_threshold));
 
     const existingStageIds = new Set(filters.stage_ids || (filters.stage_id ? [filters.stage_id] : []));
     setSelectedStageIds(existingStageIds);
@@ -151,6 +200,33 @@ export default function OpenConfig({ supabase: sbProp, userId, analysis, tournam
   const primaryEvent = getPrimaryEvent();
   const isTeams = primaryEvent?.type === 'teams';
 
+  const hasBidding = (tournament?.bg_events || []).some(ev =>
+    (ev.bg_stages || []).some(stg => selectedStageIds.has(stg.id)) && tournament.source_format === 'lovebridge'
+  );
+
+  const toggleFilter = (f) => {
+    setSelectedFilters(prev =>
+      prev.includes(f) ? prev.filter(x => x !== f) : [...prev, f]
+    );
+  };
+
+  const teamFilters = [
+    { key: 'diff_contract', label: 'Deals where the 2 tables were in different contracts' },
+    { key: 'same_contract_down', label: 'Both sides same contract, one went down' },
+    { key: 'game_both_tables', label: 'Final contract 4-level or higher at both tables' },
+    { key: 'defender_bid_high', label: 'Defending side bid 3+ level at one or both tables', needsBidding: true },
+    { key: 'imp_loss', label: `Deals where exchange of more than  IMPs`, hasInput: true, inputValue: impThreshold, onInput: setImpThreshold },
+    { key: 'suboptimal', label: 'Deals where we were in a suboptimal contract' },
+  ];
+
+  const isImpPairs = !isTeams && primaryEvent?.scoring === 'imp';
+  const pairFilters = [
+    { key: 'low_pct', label: isImpPairs ? `Deals with score below IMPs` : `Deals with score below %`, hasInput: true, inputValue: pctThreshold, onInput: setPctThreshold },
+    { key: 'suboptimal', label: 'Deals where we were in a suboptimal contract' },
+  ];
+
+  const availableFilters = isTeams ? teamFilters : pairFilters;
+
   const hasMultipleStages = tournament && (tournament.bg_events || []).reduce(
     (sum, ev) => sum + (ev.bg_stages || []).length, 0
   ) > 1;
@@ -165,6 +241,10 @@ export default function OpenConfig({ supabase: sbProp, userId, analysis, tournam
   };
 
   const handleProceed = async () => {
+    if (!name.trim()) {
+      setError('Give your deal set a name.');
+      return;
+    }
     if (selectedStageIds.size === 0) {
       setError('Select at least one stage.');
       return;
@@ -195,8 +275,10 @@ export default function OpenConfig({ supabase: sbProp, userId, analysis, tournam
         mode: 'custom',
         stage_ids: stageIds,
         selections,
-        active_filters: [],
+        active_filters: selectedFilters,
       };
+      if (selectedFilters.includes('imp_loss')) filters.imp_threshold = parseInt(impThreshold) || 5;
+      if (selectedFilters.includes('low_pct')) filters.pct_threshold = parseInt(pctThreshold) || 40;
       if (stageIds.length === 1) {
         const sel = selections[0];
         if (sel) {
@@ -231,7 +313,9 @@ export default function OpenConfig({ supabase: sbProp, userId, analysis, tournam
       if (dbErr) { setError(dbErr.message); return; }
       onProceed(data);
     } else {
-      const filters = { ...(analysis.filters || {}), stage_ids: stageIds, selections };
+      const filters = { ...(analysis.filters || {}), stage_ids: stageIds, selections, active_filters: selectedFilters };
+      if (selectedFilters.includes('imp_loss')) filters.imp_threshold = parseInt(impThreshold) || 5;
+      if (selectedFilters.includes('low_pct')) filters.pct_threshold = parseInt(pctThreshold) || 40;
       if (stageIds.length === 1 && selections[0]) {
         filters.stage_id = selections[0].stage_id;
         filters.stage_name = selections[0].stage_name;
@@ -365,6 +449,43 @@ export default function OpenConfig({ supabase: sbProp, userId, analysis, tournam
             </div>
           )}
 
+          {/* Filters */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Filters</label>
+            <div className="space-y-2">
+              {availableFilters.map(f => {
+                const disabled = f.needsBidding && !hasBidding;
+                return (
+                  <label key={f.key} className={`flex items-center gap-2 text-sm ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
+                    <input
+                      type="checkbox"
+                      checked={selectedFilters.includes(f.key)}
+                      onChange={() => !disabled && toggleFilter(f.key)}
+                      disabled={disabled}
+                      className="rounded"
+                    />
+                    <span className={disabled ? 'text-gray-400' : 'text-gray-700'}>
+                      {f.hasInput ? (
+                        <>
+                          {f.label.split('%')[0].split('IMPs')[0]}
+                          <input
+                            type="number"
+                            value={f.inputValue}
+                            onChange={(e) => f.onInput(e.target.value)}
+                            className="w-12 mx-1 px-1 py-0.5 border border-gray-300 rounded text-center text-sm"
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                          {f.label.includes('%') ? '%' : 'IMPs'}
+                        </>
+                      ) : f.label}
+                      {disabled && <span className="text-xs text-gray-400 ml-1">(requires bidding data)</span>}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
           {error && <p className="text-sm text-red-600">{error}</p>}
 
           <div className="flex gap-2 pt-2">
@@ -373,7 +494,7 @@ export default function OpenConfig({ supabase: sbProp, userId, analysis, tournam
               disabled={saving || selectedStageIds.size === 0}
               className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50"
             >
-              {saving ? 'Loading...' : 'View Deals'}
+              {saving ? 'Creating...' : 'Create Deal Set'}
             </button>
             <button onClick={onBack} className="px-4 py-2 border border-gray-300 rounded text-sm hover:bg-gray-50">
               Back

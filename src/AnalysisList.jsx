@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase as defaultSupabase } from './supabase.js';
 import { buildTeamRows, buildPairRows } from './AnalysisView.jsx';
 
-export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAdmin, onNew, onRetrieve, onOpen, onLogout, onBack, Header, displayRowsCache }) {
+export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAdmin, onNew, onRetrieve, onOpen, onCreateNew, onLogout, onBack, Header, displayRowsCache }) {
   const sb = sbProp || defaultSupabase;
   const [analyses, setAnalyses] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -155,32 +155,21 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
             </button>
             <h1 className="text-lg font-bold">My Deal Sets</h1>
           </div>
+          <button
+            onClick={onCreateNew}
+            className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
+          >
+            Create New Deal Set
+          </button>
         </div>
       )}
 
-      <div className="px-6 py-4">
-        <div className="flex gap-3 items-center mb-4">
-          {isAdmin && (
-            <button
-              onClick={onNew}
-              className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
-            >
-              Create Deal Set
-            </button>
-          )}
-          <button
-            onClick={onRetrieve}
-            className="px-4 py-2 bg-green-600 text-white rounded text-sm hover:bg-green-700"
-          >
-            Retrieve Played Deals
-          </button>
-        </div>
-
+      <div className="px-6 py-4 max-w-2xl">
         {loading ? (
           <p className="text-gray-400 py-8 text-center">Loading...</p>
         ) : analyses.length === 0 ? (
           <div className="bg-white border border-gray-200 rounded-lg p-8 text-center text-gray-400">
-            No deal sets yet. Click "Retrieve Played Deals" to get started.
+            No deal sets yet. Click "Create New Deal Set" to get started.
           </div>
         ) : (
           <div className="space-y-2">
@@ -198,9 +187,6 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
                 >
                   <div>
                     <p className="font-medium text-gray-800">{a.name}</p>
-                    <p className="text-sm text-gray-500">
-                      {[t?.name, ev?.name, t?.date_start, filterDesc].filter(Boolean).join(' · ')}
-                    </p>
                   </div>
                   <div className="flex gap-2">
                     <button
@@ -405,6 +391,202 @@ function ShareAnalysisDialog({ analysis, supabase, userId, onClose }) {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+
+export function CreateDealSetPicker({ supabase: sbProp, onBack, onRetrieve, onCreateFromSelection }) {
+  const sb = sbProp || defaultSupabase;
+  const [tournaments, setTournaments] = useState([]);
+  const [loadingTournaments, setLoadingTournaments] = useState(true);
+  const [expandedTournaments, setExpandedTournaments] = useState({});
+  const [selectedStages, setSelectedStages] = useState([]);
+
+  const selectedStageIds = new Set(selectedStages.map(s => s.stageId));
+
+  useEffect(() => { loadTournaments(); }, []);
+
+  const loadTournaments = async () => {
+    const { data } = await sb
+      .from('bg_tournaments')
+      .select(`
+        id, name, location, date_start, source_format,
+        bg_events ( id, name, type, scoring, event_order,
+          bg_stages ( id, name, stage_order )
+        )
+      `)
+      .order('created_at', { ascending: false });
+
+    const sorted = (data || []).map(t => ({
+      ...t,
+      bg_events: (t.bg_events || [])
+        .sort((a, b) => (a.event_order || 0) - (b.event_order || 0))
+        .map(e => ({
+          ...e,
+          bg_stages: (e.bg_stages || []).sort((a, b) => (a.stage_order || 0) - (b.stage_order || 0)),
+        })),
+    }));
+    setTournaments(sorted);
+    setLoadingTournaments(false);
+  };
+
+  const handleStageToggle = (ev, stg, tourn) => {
+    setSelectedStages(prev => {
+      const exists = prev.find(s => s.stageId === stg.id);
+      if (exists) return prev.filter(s => s.stageId !== stg.id);
+      return [...prev, {
+        tournamentId: tourn.id, tournamentName: tourn.name,
+        eventId: ev.id, eventName: ev.name, eventType: ev.type, eventScoring: ev.scoring,
+        stageId: stg.id, stageName: stg.name,
+        sourceFormat: tourn.source_format,
+      }];
+    });
+  };
+
+  const handleTournamentToggle = (tourn) => {
+    const allStages = (tourn.bg_events || []).flatMap(ev =>
+      (ev.bg_stages || []).map(stg => ({ ev, stg }))
+    );
+    const allChecked = allStages.every(({ stg }) => selectedStageIds.has(stg.id));
+    setSelectedStages(prev => {
+      if (allChecked) {
+        const stageIds = new Set(allStages.map(({ stg }) => stg.id));
+        return prev.filter(s => !stageIds.has(s.stageId));
+      }
+      const existing = new Set(prev.map(s => s.stageId));
+      const toAdd = allStages.filter(({ stg }) => !existing.has(stg.id)).map(({ ev, stg }) => ({
+        tournamentId: tourn.id, tournamentName: tourn.name,
+        eventId: ev.id, eventName: ev.name, eventType: ev.type, eventScoring: ev.scoring,
+        stageId: stg.id, stageName: stg.name,
+        sourceFormat: tourn.source_format,
+      }));
+      return [...prev, ...toAdd];
+    });
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-100">
+      <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button onClick={onBack} className="px-2 py-1 text-sm border border-gray-300 rounded hover:bg-gray-50">
+            &larr; Back
+          </button>
+          <h1 className="text-lg font-bold">Create New Deal Set</h1>
+        </div>
+        <button
+          onClick={onRetrieve}
+          className="px-3 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700"
+        >
+          Retrieve New Tournament
+        </button>
+      </div>
+
+      <div className="px-6 py-4 max-w-2xl space-y-4">
+        {loadingTournaments ? (
+          <p className="text-gray-400 py-8 text-center">Loading tournaments...</p>
+        ) : tournaments.length === 0 ? (
+          <div className="bg-white border border-gray-200 rounded-lg p-8 text-center text-gray-400">
+            No tournaments yet. Click "Retrieve New Tournament" to add one.
+          </div>
+        ) : (
+          <TournamentPicker
+            tournaments={tournaments}
+            expandedTournaments={expandedTournaments}
+            setExpandedTournaments={setExpandedTournaments}
+            onStageToggle={handleStageToggle}
+            onTournamentToggle={handleTournamentToggle}
+            selectedStageIds={selectedStageIds}
+          />
+        )}
+
+        {selectedStages.length > 0 && (
+          <button
+            onClick={() => onCreateFromSelection(selectedStages)}
+            className="px-4 py-2 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700"
+          >
+            Continue
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+function TournamentPicker({ tournaments, expandedTournaments, setExpandedTournaments, onStageToggle, onTournamentToggle, selectedStageIds }) {
+  const groups = { teams: [], pairs: [] };
+  for (const t of tournaments) {
+    const teamsEvents = (t.bg_events || []).filter(e => e.type === 'teams');
+    const pairsEvents = (t.bg_events || []).filter(e => e.type !== 'teams');
+    if (teamsEvents.length) groups.teams.push({ ...t, bg_events: teamsEvents });
+    if (pairsEvents.length) groups.pairs.push({ ...t, bg_events: pairsEvents });
+  }
+
+  const sections = [
+    { key: 'teams', label: 'Teams', data: groups.teams },
+    { key: 'pairs', label: 'Pairs', data: groups.pairs },
+  ].filter(s => s.data.length > 0);
+
+  return (
+    <div className="space-y-4">
+      {sections.map(section => (
+        <div key={section.key}>
+          <label className="block text-sm font-bold text-gray-700 mb-2">{section.label}</label>
+          <div className="space-y-1">
+            {section.data.map(t => (
+              <TournamentRow
+                key={`${section.key}-${t.id}`}
+                tournament={t}
+                expanded={!!expandedTournaments[`${section.key}-${t.id}`]}
+                onToggle={() => setExpandedTournaments(prev => ({ ...prev, [`${section.key}-${t.id}`]: !prev[`${section.key}-${t.id}`] }))}
+                onStageToggle={(ev, stg) => onStageToggle(ev, stg, t)}
+                onTournamentToggle={() => onTournamentToggle(t)}
+                selectedStageIds={selectedStageIds}
+              />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+
+function TournamentRow({ tournament, expanded, onToggle, onStageToggle, onTournamentToggle, selectedStageIds }) {
+  const t = tournament;
+  const events = t.bg_events || [];
+  const allStages = events.flatMap(ev => (ev.bg_stages || []).map(stg => ({ ev, stg })));
+
+  const totalStages = allStages.length;
+  const selectedCount = allStages.filter(({ stg }) => selectedStageIds.has(stg.id)).length;
+  const allChecked = totalStages > 0 && selectedCount === totalStages;
+  const someChecked = selectedCount > 0 && !allChecked;
+
+  return (
+    <div className="border border-gray-200 rounded-lg bg-white overflow-hidden">
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center px-4 py-3 bg-gray-50 hover:bg-gray-100 text-left"
+      >
+        <span className="text-gray-400 text-xs mr-2">{expanded ? '▾' : '▸'}</span>
+        <span className="text-base font-bold text-gray-800">{t.name}</span>
+      </button>
+
+      {expanded && allStages.map(({ ev, stg }) => (
+        <label
+          key={stg.id}
+          className="flex items-center pl-10 pr-4 py-2 hover:bg-blue-50 border-t border-gray-100 cursor-pointer"
+        >
+          <input
+            type="checkbox"
+            checked={selectedStageIds.has(stg.id)}
+            onChange={() => onStageToggle(ev, stg)}
+            className="rounded mr-3"
+          />
+          <span className="text-sm text-gray-700">{stg.name}</span>
+        </label>
+      ))}
     </div>
   );
 }

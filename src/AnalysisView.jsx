@@ -352,17 +352,33 @@ export function buildPairRows(boards, results, filters) {
     });
   }
 
+  // Build stage index for multi-session display labels
+  const stageIds = filters.stage_ids || [];
+  const multiSession = stageIds.length > 1;
+  const stageIndex = {};
+  if (multiSession) {
+    stageIds.forEach((sid, i) => { stageIndex[sid] = i + 1; });
+  }
+
   filtered.sort((a, b) => {
+    const sa = stageIndex[boardMap[a.board_id]?.stage_id] || 0;
+    const sb = stageIndex[boardMap[b.board_id]?.stage_id] || 0;
+    if (sa !== sb) return sa - sb;
     const ba = boardMap[a.board_id]?.board_number || 0;
     const bb = boardMap[b.board_id]?.board_number || 0;
     return ba - bb;
   });
 
-  return filtered.map(r => ({
-    board: boardMap[r.board_id],
-    result: r,
-    otherRoom: null,
-  }));
+  return filtered.map(r => {
+    const board = boardMap[r.board_id];
+    const si = multiSession && board ? stageIndex[board.stage_id] : null;
+    return {
+      board,
+      result: r,
+      otherRoom: null,
+      displayBoardNumber: si ? `${board.board_number}_${si}` : board?.board_number,
+    };
+  });
 }
 
 
@@ -406,7 +422,7 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
         const { data: created, error: createErr } = await supabase
           .from('discussions')
           .insert({
-            name: `Board ${row.board.board_number} Notes`,
+            name: `Board ${row.displayBoardNumber ?? row.board.board_number} Notes`,
             created_by: userId,
             resource_type: resourceType,
             resource_id: resourceId,
@@ -655,9 +671,10 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
               onOtherRoom={isTeams && row.otherRoom ? () => setPopup(popup === 'otherroom' ? null : 'otherroom') : undefined}
               onAnalysis={undefined}
               onTraveller={boardResults.length > 1 ? () => setPopup(popup === 'traveller' ? null : 'traveller') : undefined}
-              boardNumber={row.board.board_number}
+              boardNumber={row.displayBoardNumber ?? row.board.board_number}
               onNotes={supabase ? () => handleOpenNotes() : undefined}
               notesLoading={notesLoading}
+              isImpPairs={!isTeams && boardResults.some(r => r.imps_ns != null)}
             />
           </div>
         </div>
@@ -676,7 +693,7 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
           ourParticipantId={ourParticipantId}
           isTeams={isTeams}
           onClose={() => setPopup(null)}
-          boardNumber={row.board.board_number}
+          boardNumber={row.displayBoardNumber ?? row.board.board_number}
         />
       )}
 
@@ -687,7 +704,7 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
           supabase={supabase}
           userId={userId}
           onClose={() => setPopup(null)}
-          boardNumber={row.board.board_number}
+          boardNumber={row.displayBoardNumber ?? row.board.board_number}
           analysisName={analysisName}
           DiscussionView={DiscussionView}
         />
@@ -899,6 +916,8 @@ function TravellerTable({ boardResults, participantMap, highlightParticipantId, 
 
   if (!boardResults.length) return null;
 
+  const isImpPairs = !isTeams && boardResults.some(r => r.imps_ns != null);
+
   const handleSort = (key) => {
     if (sortKey === key) {
       setSortAsc(!sortAsc);
@@ -956,7 +975,7 @@ function TravellerTable({ boardResults, participantMap, highlightParticipantId, 
           <th className={thClass} onClick={() => handleSort('lead')}>Lead{sortIndicator('lead')}</th>
           <th className={`${thClass} text-right`} onClick={() => handleSort('score')}>Score{sortIndicator('score')}</th>
           {isTeams && <th className={`${thClass} text-center`} onClick={() => handleSort('room')}>Room{sortIndicator('room')}</th>}
-          {isTeams
+          {isTeams || isImpPairs
             ? <th className={`${thClass} text-right`} onClick={() => handleSort('imps')}>IMPs{sortIndicator('imps')}</th>
             : <th className={`${thClass} text-right`} onClick={() => handleSort('pct')}>MP%{sortIndicator('pct')}</th>
           }
@@ -998,7 +1017,7 @@ function TravellerTable({ boardResults, participantMap, highlightParticipantId, 
                 </td>
                 <td className="py-1 px-1.5 text-right font-mono">{r.passed_out ? '' : scoreStr}</td>
                 {isTeams && <td className="py-1 px-1.5 text-center text-gray-400">{r.room === 'open' ? 'O' : 'C'}</td>}
-                {isTeams
+                {isTeams || isImpPairs
                   ? <td className={`py-1 px-1.5 text-right font-medium ${(r.imps_ns || 0) > 0 ? 'text-green-700' : (r.imps_ns || 0) < 0 ? 'text-red-600' : 'text-gray-500'}`}>
                       {r.imps_ns != null ? (r.imps_ns > 0 ? `+${r.imps_ns}` : r.imps_ns) : ''}
                     </td>

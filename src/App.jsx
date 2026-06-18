@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabase.js';
-import AnalysisList from './AnalysisList.jsx';
-import NewAnalysis from './NewAnalysis.jsx';
+import AnalysisList, { CreateDealSetPicker } from './AnalysisList.jsx';
 import RetrieveDeals from './RetrieveDeals.jsx';
 import OpenConfig from './OpenConfig.jsx';
 import AnalysisView from './AnalysisView.jsx';
@@ -11,7 +10,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState('list');
   const [activeAnalysis, setActiveAnalysis] = useState(null);
-  const [retrievedTournament, setRetrievedTournament] = useState(null);
+  const [selectedStages, setSelectedStages] = useState(null);
   const displayRowsCache = useRef({});
 
   useEffect(() => {
@@ -27,14 +26,14 @@ export default function App() {
 
   if (loading) return null;
 
-  if (view === 'new') {
+  if (view === 'create') {
     return (
-      <NewAnalysis
-        userId={userId}
+      <CreateDealSetPicker
         onBack={() => setView('list')}
-        onCreated={(analysis) => {
-          setActiveAnalysis(analysis);
-          setView('view');
+        onRetrieve={() => setView('retrieve')}
+        onCreateFromSelection={(stages) => {
+          setSelectedStages(stages);
+          setView('open-config');
         }}
       />
     );
@@ -43,11 +42,8 @@ export default function App() {
   if (view === 'retrieve') {
     return (
       <RetrieveDeals
-        onBack={() => setView('list')}
-        onRetrieved={(tournament) => {
-          setRetrievedTournament(tournament);
-          setView('open-config');
-        }}
+        onBack={() => setView('create')}
+        onRetrieved={() => setView('create')}
       />
     );
   }
@@ -56,17 +52,15 @@ export default function App() {
     return (
       <OpenConfig
         userId={userId}
-        analysis={retrievedTournament ? null : activeAnalysis}
-        tournament={retrievedTournament}
+        selectedStages={selectedStages}
         onBack={() => {
-          setRetrievedTournament(null);
+          setSelectedStages(null);
+          setView('create');
+        }}
+        onProceed={() => {
+          setSelectedStages(null);
           setActiveAnalysis(null);
           setView('list');
-        }}
-        onProceed={(analysis) => {
-          setRetrievedTournament(null);
-          setActiveAnalysis(analysis);
-          setView('view');
         }}
       />
     );
@@ -87,12 +81,10 @@ export default function App() {
     <AnalysisList
       userId={userId}
       isAdmin={true}
-      onNew={() => setView('new')}
-      onRetrieve={() => setView('retrieve')}
+      onCreateNew={() => setView('create')}
       onOpen={(analysis) => {
         setActiveAnalysis(analysis);
-        setRetrievedTournament(null);
-        setView('open-config');
+        setView('view');
       }}
       displayRowsCache={displayRowsCache.current}
     />

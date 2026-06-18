@@ -3,7 +3,7 @@ import { useState } from 'react';
 const SUIT_SYM = { S: '♠', H: '♥', D: '♦', C: '♣' };
 const SUIT_CLR = { S: '#000', H: '#c62828', D: '#c62828', C: '#2e7d32' };
 
-export default function HandDiagram({ board, result, otherRoom, participantMap, ourParticipantId, onOtherRoom, onAnalysis, onTraveller, onNotes, notesLoading, isTeams, ddBest, optimalLines, boardNumber }) {
+export default function HandDiagram({ board, result, otherRoom, participantMap, ourParticipantId, onOtherRoom, onAnalysis, onTraveller, onNotes, notesLoading, isTeams, ddBest, optimalLines, boardNumber, isImpPairs }) {
   const vul = board.vulnerability;
 
   const playerLabel = (dir) => {
@@ -28,28 +28,41 @@ export default function HandDiagram({ board, result, otherRoom, participantMap, 
     ? (result.overtricks === 0 ? '=' : result.overtricks > 0 ? `+${result.overtricks}` : `${result.overtricks}`)
     : '';
 
-  // MP% for pairs
+  // MP% for pairs — show our side's percentage
   const mpPct = result?.mp_ns != null && result?.mp_ew != null
-    ? (() => { const total = (result.mp_ns || 0) + (result.mp_ew || 0); return total > 0 ? Math.round(((result.mp_ns || 0) / total) * 100) : null; })()
+    ? (() => {
+        const total = (result.mp_ns || 0) + (result.mp_ew || 0);
+        if (total <= 0) return null;
+        const ourMp = ourParticipantId && result.ew_participant_id === ourParticipantId
+          ? (result.mp_ew || 0) : (result.mp_ns || 0);
+        return Math.round((ourMp / total) * 100);
+      })()
     : null;
 
   const nsBest = bestContracts(board, 'ns');
   const ewBest = bestContracts(board, 'ew');
 
-  // IMP calculation: our score in this room + our score in other room
+  // IMP calculation
   let boardImps = null;
   if (otherRoom && result) {
+    // Teams: our score in this room + our score in other room
     let ourScoreHere, ourScoreThere;
     if (ourParticipantId) {
       ourScoreHere = result.ns_participant_id === ourParticipantId ? (result.score || 0) : -(result.score || 0);
       ourScoreThere = otherRoom.ns_participant_id === ourParticipantId ? (otherRoom.score || 0) : -(otherRoom.score || 0);
     } else {
       ourScoreHere = result.score || 0;
-      // In team matches NS/EW swap between rooms
       const swapped = result.ns_participant_id === otherRoom.ew_participant_id;
       ourScoreThere = swapped ? -(otherRoom.score || 0) : (otherRoom.score || 0);
     }
     boardImps = scoreToImps(ourScoreHere + ourScoreThere);
+  } else if (result?.imps_ns != null || result?.imps_ew != null) {
+    // IMP pairs: use stored per-board IMPs
+    if (ourParticipantId && result.ew_participant_id === ourParticipantId) {
+      boardImps = result.imps_ew;
+    } else {
+      boardImps = result.imps_ns;
+    }
   }
 
   const resultBar = result && (
@@ -95,7 +108,7 @@ export default function HandDiagram({ board, result, otherRoom, participantMap, 
             </span>
             <span style={{ color: '#6b7280' }}> by {c.dir} {otStr} ({scoreStr})</span>
             {sideImps != null && <span style={{ fontWeight: 600, color: sideImps > 0 ? '#15803d' : '#6b7280', marginLeft: 4 }}>{sideImps > 0 ? '+' : ''}{sideImps} IMPs</span>}
-            {sideImps == null && mp != null && <span style={{ fontWeight: 600, color: '#15803d', marginLeft: 4 }}>{Math.round(mp)}%</span>}
+            {sideImps == null && mp != null && !isImpPairs && <span style={{ fontWeight: 600, color: '#15803d', marginLeft: 4 }}>{Math.round(mp)}%</span>}
           </div>
         );
       })}
@@ -146,6 +159,13 @@ export default function HandDiagram({ board, result, otherRoom, participantMap, 
     <div>
       {/* Mobile: compact layout */}
       <div className="md:hidden" style={{ fontSize: '0.75rem' }}>
+        {/* Board ref */}
+        <div style={{ fontWeight: 700, fontSize: '0.85rem', marginBottom: 2, color: '#1f2937' }}>
+          Board {boardNumber}
+          <span style={{ fontWeight: 400, fontSize: '0.7rem', color: '#6b7280', marginLeft: 6 }}>
+            Dlr {board.dealer} · Vul {vul === 'none' ? 'Nil' : vul === 'both' ? 'All' : vul.toUpperCase()}
+          </span>
+        </div>
         {/* Contract + result */}
         {result && !result.passed_out && (
           <div style={{ fontWeight: 700, marginBottom: 2 }}>
@@ -192,6 +212,9 @@ export default function HandDiagram({ board, result, otherRoom, participantMap, 
       <div className="hidden md:flex md:gap-3">
         <div style={{ fontSize: '0.8rem', display: 'inline-block' }}>
           <div style={{ display: 'inline-flex', flexDirection: 'column' }}>
+            <div style={{ fontWeight: 700, fontSize: '0.95rem', marginBottom: 4, color: '#1f2937' }}>
+              Board {boardNumber}
+            </div>
             {result?.lin && <BiddingTable lin={result.lin} dealer={board.dealer} />}
             {result && (
               <div style={{ border: '1px solid #e5e7eb', borderRadius: 5, padding: '4px 8px', marginTop: 4 }}>
@@ -316,7 +339,7 @@ function HandBlock({ board, dir, align }) {
 }
 
 
-function Compass({ vul, dealer, boardNumber }) {
+function Compass({ vul, dealer }) {
   const nsVul = vul === 'ns' || vul === 'both';
   const ewVul = vul === 'ew' || vul === 'both';
 
@@ -328,12 +351,9 @@ function Compass({ vul, dealer, boardNumber }) {
            `<text x="${cx}" y="${cy + 4}" text-anchor="middle" fill="white" font-size="10" font-weight="bold"${decor}>${dir}</text>`;
   };
 
-  const bn = boardNumber != null ? `<text x="28" y="32" text-anchor="middle" fill="#374151" font-size="12" font-weight="bold">${boardNumber}</text>` : '';
-
   const svg = `<svg width="56" height="56" viewBox="0 0 56 56">
     ${ball('N', 28, 10)}
     ${ball('W', 10, 28)}
-    ${bn}
     ${ball('E', 46, 28)}
     ${ball('S', 28, 46)}
   </svg>`;
@@ -544,7 +564,9 @@ function fmtContractColored(r) {
 
 function fmtLead(r) {
   if (!r.lead_suit) return '';
-  return `${SUIT_SYM[r.lead_suit] || r.lead_suit}${r.lead_rank || ''}`;
+  const sym = SUIT_SYM[r.lead_suit] || r.lead_suit;
+  const col = SUIT_CLR[r.lead_suit] || '#333';
+  return <><span style={{ color: col }}>{sym}</span>{r.lead_rank || ''}</>;
 }
 
 function vulLabel(v) {
