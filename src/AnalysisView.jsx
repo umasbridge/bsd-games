@@ -461,196 +461,136 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
 
   if (!row.board) return null;
 
-  // Compute Best for NS / Best for EW (both teams and pairs)
+  // Compute optimal/alternate contract lines
   let pairsDDBest = null;
   let optLines = null;
-  if (row.board && hasDDData(row.board)) {
+  if (row.board && hasDDData(row.board) && row.result && !row.result.passed_out) {
     const b = row.board;
-    const nsVul = isVul('ns', b.vulnerability);
-    const ewVul = isVul('ew', b.vulnerability);
-    const ns = bestDDContract(b, 'ns', nsVul);
-    const ew = bestDDContract(b, 'ew', ewVul);
-    const fieldScoresForDD = boardResults.length > 1 ? boardResults.map(x => x.score || 0) : null;
-    if (ns && fieldScoresForDD) {
-      ns.nsMp = calcMpPct(ns.score, fieldScoresForDD, 'ns');
-      ns.ewMp = calcMpPct(-ns.score, fieldScoresForDD, 'ew');
-    }
-    if (ew && fieldScoresForDD) {
-      ew.nsMp = calcMpPct(-ew.score, fieldScoresForDD, 'ns');
-      ew.ewMp = calcMpPct(ew.score, fieldScoresForDD, 'ew');
-    }
-    if (!isTeams) pairsDDBest = null; // pairs: replaced by best-for lines
+    const r = row.result;
+    const fieldScores = boardResults.length > 1 ? boardResults.map(x => x.score || 0) : null;
+    const declarerIsNs = r.declarer === 'N' || r.declarer === 'S';
+    const ourSideIsNs = ourParticipantId
+      ? r.ns_participant_id === ourParticipantId
+      : declarerIsNs;
+    const ourSide = ourSideIsNs ? 'ns' : 'ew';
+    const weAreDeclaring = ourSideIsNs === declarerIsNs;
 
-    if (row.result && !row.result.passed_out) {
-      const r = row.result;
-      const declarer = r.declarer;
-      const declarerIsNs = declarer === 'N' || declarer === 'S';
-      const nsScore = r.score || 0;
-      const fieldScores = boardResults.length > 1 ? boardResults.map(x => x.score || 0) : null;
-
-      const declarerSide = declarerIsNs ? 'ns' : 'ew';
-      const defenderSide = declarerIsNs ? 'ew' : 'ns';
-
-      // 1. Best for declaring side: best DD-makeable contract (only if it improves their score)
-      const declBest = declarerIsNs ? ns : ew;
-      let bestForDeclarer = null;
-      if (declBest) {
-        const declActualScore = declarerIsNs ? nsScore : -nsScore;
-        if (declBest.score > declActualScore) {
-          const declNsScore = declarerIsNs ? declBest.score : -declBest.score;
-          bestForDeclarer = {
-            contract: { level: declBest.level, denom: declBest.denom, x: '', dir: declBest.dir, ot: declBest.tricks - (declBest.level + 6) },
-            nsScore: declNsScore,
-          };
-        }
-      }
-
-      // 2. Best for defending side: DD defense or competing contract
-      let bestForDefender = null;
-      const defActualScore = defenderSide === 'ns' ? nsScore : -nsScore;
-
-      // a. DD defense of actual contract
-      const dDir = declarer.toLowerCase();
-      const dk = (r.contract_denom === 'NT') ? 'nt' : r.contract_denom.toLowerCase();
-      const ddTricks = b[`dd_${dDir}_${dk}`];
-      const needed = r.contract_level + 6;
-
-      if (ddTricks != null && ddTricks < r.tricks) {
-        const declVul = isVul(declarerSide, b.vulnerability);
-        const isMin = r.contract_denom === 'C' || r.contract_denom === 'D';
-        const x = r.contract_x;
-        let ddDS;
-        if (ddTricks >= needed) {
-          ddDS = x === 'X' ? computeDoubledMaking(r.contract_level, r.contract_denom, ddTricks, declVul, isMin)
-                           : computeScore(r.contract_level, r.contract_denom, ddTricks, declVul, isMin);
-        } else {
-          const dn = needed - ddTricks;
-          ddDS = x === 'X' ? doubledDownScore(dn, declVul) : (declVul ? -100 * dn : -50 * dn);
-        }
-        const defenseScore = -ddDS;
-        const defenseNs = declarerIsNs ? -ddDS : ddDS;
-        // wait, need to think about this. ddDS = declarer's score. Defense score = -ddDS.
-        // NS score: if declarer is NS, nsScore = ddDS. If declarer is EW, nsScore = -ddDS.
-        const ddNsScore = declarerIsNs ? ddDS : -ddDS;
-        const ddDefScore = defenderSide === 'ns' ? ddNsScore : -ddNsScore;
-
-        if (ddDefScore > defActualScore) {
-          bestForDefender = {
-            contract: { level: r.contract_level, denom: r.contract_denom, x: x || '', dir: declarer, ot: ddTricks - needed },
-            nsScore: ddNsScore,
-          };
-        }
-      }
-
-      // b. Competing contracts for defender — collect all, then keep ties for best
-      const defVul = isVul(defenderSide, b.vulnerability);
-      const defDirs = defenderSide === 'ns' ? ['n', 's'] : ['e', 'w'];
-      const defCandidates = [];
-
-      // Include DD defense if it improves
-      if (bestForDefender) defCandidates.push(bestForDefender);
-
-      for (const denom of ['C', 'D', 'H', 'S', 'NT']) {
-        const denomKey = denom === 'NT' ? 'nt' : denom.toLowerCase();
-        const isMinor = denom === 'C' || denom === 'D';
-        let maxT = 0, bestDir = '';
-        for (const dir of defDirs) {
-          const t = b[`dd_${dir}_${denomKey}`];
-          if (t != null && t > maxT) { maxT = t; bestDir = dir.toUpperCase(); }
-        }
-        if (maxT === 0) continue;
-
-        const minLevel = (SUIT_RANK[r.contract_denom] || 0) < (SUIT_RANK[denom] || 0) ? r.contract_level : r.contract_level + 1;
-
-        for (let level = minLevel; level <= 7; level++) {
-          const down = Math.max(0, (level + 6) - maxT);
-          const ot = maxT - (level + 6);
-          const undoubled = down === 0 ? computeScore(level, denom, maxT, defVul, isMinor) : (defVul ? -100 * down : -50 * down);
-          const doubled = down === 0 ? computeDoubledMaking(level, denom, maxT, defVul, isMinor) : doubledDownScore(down, defVul);
-
-          if (undoubled <= defActualScore || doubled <= defActualScore) continue;
-
-          const altNs = defenderSide === 'ns' ? undoubled : -undoubled;
-          defCandidates.push({
-            contract: { level, denom, x: '', dir: bestDir, ot: ot >= 0 ? ot : -down },
-            nsScore: altNs,
-          });
-          break;
-        }
-      }
-
-      // Find best score, then keep all that match it
-      let bestDefScore = -Infinity;
-      for (const c of defCandidates) {
-        const s = defenderSide === 'ns' ? c.nsScore : -c.nsScore;
-        if (s > bestDefScore) bestDefScore = s;
-      }
-      const bestDefenders = defCandidates.filter(c => {
-        const s = defenderSide === 'ns' ? c.nsScore : -c.nsScore;
-        return s === bestDefScore;
-      });
-
-      // Same for declaring side — collect all DD-makeable contracts that match best score
-      const declCandidates = [];
-      if (declBest) {
-        const declActual = declarerIsNs ? nsScore : -nsScore;
-        const declSide = declarerIsNs ? 'ns' : 'ew';
-        const declVul2 = isVul(declSide, b.vulnerability);
-        const declDirs = declSide === 'ns' ? ['n', 's'] : ['e', 'w'];
-
-        for (const denom of ['C', 'D', 'H', 'S', 'NT']) {
-          const denomKey = denom === 'NT' ? 'nt' : denom.toLowerCase();
-          const isMinor2 = denom === 'C' || denom === 'D';
-          let maxT2 = 0, bestDir2 = '';
-          for (const dir of declDirs) {
-            const t = b[`dd_${dir}_${denomKey}`];
-            if (t != null && t > maxT2) { maxT2 = t; bestDir2 = dir.toUpperCase(); }
-          }
-          if (maxT2 < 7) continue;
-          const maxLevel2 = maxT2 - 6;
-          const sc = computeScore(maxLevel2, denom, maxT2, declVul2, isMinor2);
-          if (sc > declActual && sc === declBest.score) {
-            declCandidates.push({
-              contract: { level: maxLevel2, denom, x: '', dir: bestDir2, ot: maxT2 - (maxLevel2 + 6) },
-              nsScore: declarerIsNs ? sc : -sc,
-            });
-          }
-        }
-      }
-
-      // Build output lines
+    if (isTeams) {
+      // Teams: keep existing best-for logic (simplified)
+      const nsVul = isVul('ns', b.vulnerability);
+      const ewVul = isVul('ew', b.vulnerability);
+      const ns = bestDDContract(b, 'ns', nsVul);
+      const ew = bestDDContract(b, 'ew', ewVul);
       const resultLines = [];
-      if (declCandidates.length > 0) {
-        for (const c of declCandidates) {
-          c.label = declarerSide.toUpperCase();
-          resultLines.push(c);
-        }
-      } else if (bestForDeclarer) {
-        bestForDeclarer.label = declarerSide.toUpperCase();
-        resultLines.push(bestForDeclarer);
-      }
-      for (const c of bestDefenders) {
-        c.label = defenderSide.toUpperCase();
-        resultLines.push(c);
-      }
-
-      // Add metrics
-      for (const line of resultLines) {
-        if (isTeams && row.otherRoom) {
+      for (const [side, best] of [['NS', ns], ['EW', ew]]) {
+        if (!best) continue;
+        const line = {
+          label: side,
+          contract: { level: best.level, denom: best.denom, x: '', dir: best.dir, ot: best.tricks - (best.level + 6) },
+          nsScore: side === 'NS' ? best.score : -best.score,
+        };
+        if (row.otherRoom) {
           const swapped = r.ns_participant_id === row.otherRoom.ew_participant_id;
           const otherNs = swapped ? -(row.otherRoom.score || 0) : (row.otherRoom.score || 0);
-          const ourIsNs = ourParticipantId ? r.ns_participant_id === ourParticipantId : true;
-          const ourScore = ourIsNs ? line.nsScore : -line.nsScore;
-          const ourOther = ourIsNs ? otherNs : -otherNs;
+          const isNs = ourParticipantId ? r.ns_participant_id === ourParticipantId : true;
+          const ourScore = isNs ? line.nsScore : -line.nsScore;
+          const ourOther = isNs ? otherNs : -otherNs;
           line.imps = scoreToImps(ourScore + ourOther);
         }
         if (fieldScores) {
           line.nsMp = calcMpPct(line.nsScore, fieldScores, 'ns');
           line.ewMp = calcMpPct(-line.nsScore, fieldScores, 'ew');
         }
+        resultLines.push(line);
       }
-
       if (resultLines.length > 0) optLines = resultLines;
+    } else {
+      // Pairs: DD optimal for our contract + better alternate contracts
+      const dDir = r.declarer.toLowerCase();
+      const dk = r.contract_denom === 'NT' ? 'nt' : r.contract_denom.toLowerCase();
+      const ddTricks = b[`dd_${dDir}_${dk}`];
+
+      if (ddTricks != null) {
+        const needed = r.contract_level + 6;
+        const declSide = declarerIsNs ? 'ns' : 'ew';
+        const declVul = isVul(declSide, b.vulnerability);
+        const isMin = r.contract_denom === 'C' || r.contract_denom === 'D';
+        const x = r.contract_x || '';
+
+        // DD score for actual contract
+        let ddDeclScore;
+        if (ddTricks >= needed) {
+          ddDeclScore = x === 'X' ? computeDoubledMaking(r.contract_level, r.contract_denom, ddTricks, declVul, isMin)
+                                  : computeScore(r.contract_level, r.contract_denom, ddTricks, declVul, isMin);
+        } else {
+          const down = needed - ddTricks;
+          ddDeclScore = x === 'X' ? doubledDownScore(down, declVul) : (declVul ? -100 * down : -50 * down);
+        }
+
+        const ddOptimalForUs = weAreDeclaring ? ddDeclScore : -ddDeclScore;
+        const ddOptNsScore = declarerIsNs ? ddDeclScore : -ddDeclScore;
+        const ddOt = ddTricks - needed;
+
+        const resultLines = [];
+
+        // Line 1: DD optimal for our contract
+        const optLine = {
+          type: 'optimal',
+          label: 'DD',
+          contract: { level: r.contract_level, denom: r.contract_denom, x, dir: r.declarer, ot: ddOt },
+          nsScore: ddOptNsScore,
+          ourScore: ddOptimalForUs,
+          tricks: ddTricks,
+        };
+        if (fieldScores) {
+          optLine.nsMp = calcMpPct(ddOptNsScore, fieldScores, 'ns');
+          optLine.ewMp = calcMpPct(-ddOptNsScore, fieldScores, 'ew');
+        }
+        resultLines.push(optLine);
+
+        // Alternate contracts for our side that beat ddOptimalForUs
+        const ourDirs = ourSideIsNs ? ['n', 's'] : ['e', 'w'];
+        const ourVul = isVul(ourSide, b.vulnerability);
+
+        for (const denom of ['C', 'D', 'H', 'S', 'NT']) {
+          const denomKey = denom === 'NT' ? 'nt' : denom.toLowerCase();
+          const isMinor = denom === 'C' || denom === 'D';
+          let maxT = 0, bestDir = '';
+          for (const dir of ourDirs) {
+            const t = b[`dd_${dir}_${denomKey}`];
+            if (t != null && t > maxT) { maxT = t; bestDir = dir.toUpperCase(); }
+          }
+          if (maxT < 7) continue;
+
+          // Find the level that maximizes score
+          let bestScore = -Infinity, bestLevel = 0;
+          for (let level = 1; level <= maxT - 6; level++) {
+            const sc = computeScore(level, denom, maxT, ourVul, isMinor);
+            if (sc > bestScore) { bestScore = sc; bestLevel = level; }
+          }
+
+          if (bestScore > ddOptimalForUs) {
+            const nsScore = ourSideIsNs ? bestScore : -bestScore;
+            const altLine = {
+              type: 'alternate',
+              label: 'Alt',
+              contract: { level: bestLevel, denom, x: '', dir: bestDir, ot: maxT - (bestLevel + 6) },
+              nsScore,
+              ourScore: bestScore,
+            };
+            if (fieldScores) {
+              altLine.nsMp = calcMpPct(nsScore, fieldScores, 'ns');
+              altLine.ewMp = calcMpPct(-nsScore, fieldScores, 'ew');
+            }
+            resultLines.push(altLine);
+          }
+        }
+
+        // Sort alternates by score descending (keep DD optimal first)
+        const optimal = resultLines[0];
+        const alts = resultLines.slice(1).sort((a, b) => b.ourScore - a.ourScore);
+        optLines = [optimal, ...alts];
+      }
     }
   }
 

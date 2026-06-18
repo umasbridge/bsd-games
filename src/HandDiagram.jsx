@@ -95,20 +95,23 @@ export default function HandDiagram({ board, result, otherRoom, participantMap, 
     <div style={{ fontSize: '0.72rem', marginTop: 3 }}>
       {optimalLines.map((line, i) => {
         const c = line.contract;
-        const otStr = c.ot > 0 ? `+${c.ot}` : c.ot < 0 ? `↓${Math.abs(c.ot)}` : '=';
-        const sideScore = line.label === 'NS' ? line.nsScore : -line.nsScore;
-        const scoreStr = sideScore > 0 ? `+${sideScore}` : `${sideScore}`;
-        const mp = line.label === 'NS' ? line.nsMp : line.ewMp;
+        const otStr = c.ot > 0 ? `+${c.ot}` : c.ot < 0 ? `${c.ot}` : '=';
+        const ourScore = line.ourScore != null ? line.ourScore : (ourParticipantId && result?.ew_participant_id === ourParticipantId ? -line.nsScore : line.nsScore);
+        const scoreStr = ourScore > 0 ? `+${ourScore}` : `${ourScore}`;
+        const mp = ourParticipantId && result?.ew_participant_id === ourParticipantId ? line.ewMp : line.nsMp;
         const sideImps = line.imps != null ? (line.label === 'NS' ? line.imps : -line.imps) : null;
+        const isDD = line.type === 'optimal';
+        const labelColor = isDD ? '#92400e' : '#1e40af';
+        const labelText = isDD ? 'DD optimal:' : 'Better:';
         return (
           <div key={i} style={{ marginTop: i > 0 ? 2 : 0 }}>
-            <span style={{ color: '#92400e', fontWeight: 700, fontSize: '0.68rem' }}>Best for {line.label}: </span>
+            <span style={{ color: labelColor, fontWeight: 700, fontSize: '0.68rem' }}>{labelText} </span>
             <span style={{ fontWeight: 600 }}>
               {c.level}<span style={{ color: SUIT_CLR[c.denom] || '#333' }}>{SUIT_SYM[c.denom] || c.denom}</span>{c.x}
             </span>
             <span style={{ color: '#6b7280' }}> by {c.dir} {otStr} ({scoreStr})</span>
             {sideImps != null && <span style={{ fontWeight: 600, color: sideImps > 0 ? '#15803d' : '#6b7280', marginLeft: 4 }}>{sideImps > 0 ? '+' : ''}{sideImps} IMPs</span>}
-            {sideImps == null && mp != null && !isImpPairs && <span style={{ fontWeight: 600, color: '#15803d', marginLeft: 4 }}>{Math.round(mp)}%</span>}
+            {sideImps == null && mp != null && <span style={{ fontWeight: 600, color: mp >= 60 ? '#15803d' : mp <= 40 ? '#dc2626' : '#6b7280', marginLeft: 4 }}>{Math.round(mp)}%</span>}
           </div>
         );
       })}
