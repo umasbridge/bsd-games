@@ -1,6 +1,5 @@
 import { useState, useRef } from 'react';
-import AnalysisList from '../src/AnalysisList.jsx';
-import NewAnalysis from '../src/NewAnalysis.jsx';
+import AnalysisList, { CreateDealSetPicker } from '../src/AnalysisList.jsx';
 import RetrieveDeals from '../src/RetrieveDeals.jsx';
 import OpenConfig from '../src/OpenConfig.jsx';
 import AnalysisView from '../src/AnalysisView.jsx';
@@ -8,18 +7,18 @@ import AnalysisView from '../src/AnalysisView.jsx';
 export default function GameAnalysis({ supabase, userId, userEmail, isAdmin, onLogout, onBack, Header, DiscussionView }) {
   const [view, setView] = useState('list');
   const [activeAnalysis, setActiveAnalysis] = useState(null);
-  const [retrievedTournament, setRetrievedTournament] = useState(null);
+  const [selectedStages, setSelectedStages] = useState(null);
   const displayRowsCache = useRef({});
 
-  if (view === 'new') {
+  if (view === 'create') {
     return (
-      <NewAnalysis
+      <CreateDealSetPicker
         supabase={supabase}
-        userId={userId}
         onBack={() => setView('list')}
-        onCreated={(analysis) => {
-          setActiveAnalysis(analysis);
-          setView('view');
+        onRetrieve={() => setView('retrieve')}
+        onCreateFromSelection={(stages) => {
+          setSelectedStages(stages);
+          setView('open-config');
         }}
       />
     );
@@ -29,11 +28,8 @@ export default function GameAnalysis({ supabase, userId, userEmail, isAdmin, onL
     return (
       <RetrieveDeals
         supabase={supabase}
-        onBack={() => setView('list')}
-        onRetrieved={(tournament) => {
-          setRetrievedTournament(tournament);
-          setView('open-config');
-        }}
+        onBack={() => setView('create')}
+        onRetrieved={() => setView('create')}
       />
     );
   }
@@ -43,17 +39,15 @@ export default function GameAnalysis({ supabase, userId, userEmail, isAdmin, onL
       <OpenConfig
         supabase={supabase}
         userId={userId}
-        analysis={retrievedTournament ? null : activeAnalysis}
-        tournament={retrievedTournament}
+        selectedStages={selectedStages}
         onBack={() => {
-          setRetrievedTournament(null);
+          setSelectedStages(null);
+          setView('create');
+        }}
+        onProceed={() => {
+          setSelectedStages(null);
           setActiveAnalysis(null);
           setView('list');
-        }}
-        onProceed={(analysis) => {
-          setRetrievedTournament(null);
-          setActiveAnalysis(analysis);
-          setView('view');
         }}
       />
     );
@@ -78,12 +72,10 @@ export default function GameAnalysis({ supabase, userId, userEmail, isAdmin, onL
       userId={userId}
       userEmail={userEmail}
       isAdmin={isAdmin}
-      onNew={() => setView('new')}
-      onRetrieve={() => setView('retrieve')}
+      onCreateNew={() => setView('create')}
       onOpen={(analysis) => {
         setActiveAnalysis(analysis);
-        setRetrievedTournament(null);
-        setView('open-config');
+        setView('view');
       }}
       onLogout={onLogout}
       onBack={onBack}
