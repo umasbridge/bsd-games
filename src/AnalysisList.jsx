@@ -155,16 +155,18 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
             </button>
             <h1 className="text-lg font-bold">My Deal Sets</h1>
           </div>
-          <button
-            onClick={onCreateNew}
-            className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
-          >
-            Create New Deal Set
-          </button>
         </div>
       )}
 
       <div className="px-6 py-4 max-w-2xl">
+        <div className="mb-4">
+          <button
+            onClick={onCreateNew}
+            className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
+          >
+            Create New Deal Set
+          </button>
+        </div>
         {loading ? (
           <p className="text-gray-400 py-8 text-center">Loading...</p>
         ) : analyses.length === 0 ? (
