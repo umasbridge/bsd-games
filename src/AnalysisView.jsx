@@ -352,12 +352,28 @@ export function buildPairRows(boards, results, filters) {
     });
   }
 
-  // Build stage index for multi-session display labels
+  // Build stage label map for multi-session display
   const stageIds = filters.stage_ids || [];
   const multiSession = stageIds.length > 1;
   const stageIndex = {};
+  const stageLabel = {};
   if (multiSession) {
     stageIds.forEach((sid, i) => { stageIndex[sid] = i + 1; });
+    const sels = filters.selections || [];
+    const uniqueTournaments = new Set(sels.map(s => s.tournament_id));
+    const uniqueEvents = new Set(sels.map(s => s.event_id));
+    for (const sel of sels) {
+      let label = sel.stage_name || `S${stageIndex[sel.stage_id] || ''}`;
+      if (uniqueEvents.size > 1) {
+        label = `${sel.event_name} - ${label}`;
+      }
+      if (uniqueTournaments.size > 1) {
+        const dateMatch = sel.tournament_name?.match(/(\d{4}-\d{2}-\d{2})/);
+        const dateShort = dateMatch ? dateMatch[1].slice(5) : '';
+        label = dateShort ? `${dateShort} ${label}` : label;
+      }
+      stageLabel[sel.stage_id] = label;
+    }
   }
 
   filtered.sort((a, b) => {
@@ -376,7 +392,9 @@ export function buildPairRows(boards, results, filters) {
       board,
       result: r,
       otherRoom: null,
-      displayBoardNumber: si ? `${board.board_number}_${si}` : board?.board_number,
+      displayBoardNumber: multiSession && board
+        ? `${board.board_number} (${stageLabel[board.stage_id] || `S${si}`})`
+        : board?.board_number,
     };
   });
 }
