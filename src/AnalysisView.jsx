@@ -50,7 +50,8 @@ export default function AnalysisView({ supabase: sbProp, analysis, userId, onBac
             .from('bg_board_results')
             .select('*')
             .in('stage_id', stageIds)
-            .order('id'),
+            .order('id')
+            .limit(10000),
           participantQuery,
         ]);
       })
