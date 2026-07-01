@@ -444,18 +444,15 @@ export function CreateDealSetPicker({ supabase: sbProp, onBack, onRetrieve, onCr
 
   const handleDeleteTournament = async (tourn) => {
     if (!confirm(`Delete "${tourn.name}" and all its data? This cannot be undone.`)) return;
-    const eventIds = (tourn.bg_events || []).map(e => e.id);
-    const stageIds = (tourn.bg_events || []).flatMap(e => (e.bg_stages || []).map(s => s.id));
-    if (stageIds.length) {
-      await sb.from('bg_board_results').delete().in('stage_id', stageIds);
-      await sb.from('bg_boards').delete().in('stage_id', stageIds);
-      await sb.from('bg_stages').delete().in('id', stageIds);
+    try {
+      await fetch('/api/delete-tournament', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tournament_id: tourn.id }),
+      });
+    } catch (e) {
+      console.error('Delete failed:', e);
     }
-    if (eventIds.length) {
-      await sb.from('bg_participants').delete().in('event_id', eventIds);
-      await sb.from('bg_events').delete().in('id', eventIds);
-    }
-    await sb.from('bg_tournaments').delete().eq('id', tourn.id);
     setSelectedStages(prev => prev.filter(s => s.tournamentId !== tourn.id));
     await loadTournaments();
   };
