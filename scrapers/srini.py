@@ -29,6 +29,7 @@ import urllib.request
 from utils import (
     SRINI_CARD_MAP, SRINI_DEALER_MAP, SRINI_DECL_MAP, SRINI_DENOM_MAP,
     SRINI_SUIT_MAP, SRINI_VUL_MAP, hand_hcp, contract_display, compute_dd,
+    dealer_from_board,
 )
 from lin import generate_lin
 from db import (
@@ -289,7 +290,13 @@ def parse_board(board_data, stage_id):
     dd = parse_dd_tricks(hand_record)
 
     # Dealer and vulnerability
-    dealer = SRINI_DEALER_MAP.get(hand_record.get('Dealer', 0), 'N')
+    # _declarer encodes dealer: 0=N, 1=S, 2=W, 3=E
+    DECLARER_DEALER_MAP = {0: 'N', 1: 'S', 2: 'W', 3: 'E'}
+    raw_dealer = hand_record.get('Dealer', 0)
+    if raw_dealer:
+        dealer = SRINI_DEALER_MAP.get(raw_dealer, 'N')
+    else:
+        dealer = DECLARER_DEALER_MAP.get(hand_record.get('_declarer', 0), 'N')
     vul_code = hand_record.get('Vulnerability', 0)
     vulnerability = SRINI_VUL_MAP.get(vul_code, 'none')
 
