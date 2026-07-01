@@ -125,12 +125,6 @@ export default function AnalysisView({ supabase: sbProp, analysis, userId, onBac
     );
   }
 
-  const appendMc = (lin, result) => {
-    if (!lin || lin.includes('mc|')) return lin;
-    if (result?.tricks != null) return lin + `mc|${result.tricks}|`;
-    return lin;
-  };
-
   const handleDownloadLin = () => {
     const lines = [];
     displayRows.forEach((row, i) => {
@@ -138,12 +132,23 @@ export default function AnalysisView({ supabase: sbProp, analysis, userId, onBac
       const bn = row.board.board_number;
       const n = i + 1;
       const roomTag = row.result.room === 'open' ? 'o' : row.result.room === 'closed' ? 'c' : '';
-      const linWithSt = row.result.lin.replace('pn|', 'st||pn|');
-      lines.push(`qx|${roomTag}${n}|ah|Board ${bn}|${appendMc(linWithSt, row.result)}`);
+      const formatLin = (lin, r) => {
+        let l = lin.replace(/pn\|[^|]*\|/, '');
+        const mdMatch = l.match(/md\|[^|]+\|/);
+        const svMatch = l.match(/sv\|[^|]+\|/);
+        const rest = l.replace(/md\|[^|]+\|/, '').replace(/sv\|[^|]+\|/, '').replace(/^\|+|\|+$/g, '');
+        const md = mdMatch ? mdMatch[0] : '';
+        const sv = svMatch ? svMatch[0] : '';
+        let out = `${md}rh||ah|Board ${bn}|${sv}`;
+        if (rest) out += rest;
+        if (r?.tricks != null && !out.includes('mc|')) out += `mc|${r.tricks}|`;
+        out += 'pg||';
+        return out;
+      };
+      lines.push(`qx|${roomTag}${n}|${formatLin(row.result.lin, row.result)}`);
       if (row.otherRoom?.lin) {
         const otherTag = row.otherRoom.room === 'open' ? 'o' : row.otherRoom.room === 'closed' ? 'c' : '';
-        const otherLinWithSt = row.otherRoom.lin.replace('pn|', 'st||pn|');
-        lines.push(`qx|${otherTag}${n}|ah|Board ${bn}|${appendMc(otherLinWithSt, row.otherRoom)}`);
+        lines.push(`qx|${otherTag}${n}|${formatLin(row.otherRoom.lin, row.otherRoom)}`);
       }
     });
     if (!lines.length) return;

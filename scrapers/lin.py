@@ -31,7 +31,7 @@ def _encode_hand(spades, hearts, diamonds, clubs):
     """Encode one hand for the md| tag: SAKJ5HQT3DK84C962."""
     parts = []
     for prefix, holding in zip(_SUIT_ORDER, [spades, hearts, diamonds, clubs]):
-        parts.append(prefix + (holding or ''))
+        parts.append(prefix + (holding or '').replace('10', 'T'))
     return ''.join(parts)
 
 
