@@ -900,7 +900,7 @@ const SUIT_SYMBOLS_T = { S: '♠', H: '♥', D: '♦', C: '♣' };
 const DENOM_ORDER = { C: 0, D: 1, H: 2, S: 3, NT: 4 };
 
 function TravellerTable({ boardResults, participantMap, highlightParticipantId, isTeams }) {
-  const [sortKey, setSortKey] = useState('contract');
+  const [sortKey, setSortKey] = useState('ns');
   const [sortAsc, setSortAsc] = useState(true);
   const [expandedIdx, setExpandedIdx] = useState(null);
 
@@ -939,8 +939,8 @@ function TravellerTable({ boardResults, participantMap, highlightParticipantId, 
       case 'tricks': cmp = (a.tricks || 0) - (b.tricks || 0); break;
       case 'score': cmp = (a.score || 0) - (b.score || 0); break;
       case 'lead': cmp = (a.lead || '').localeCompare(b.lead || ''); break;
-      case 'ns': cmp = (participantMap[a.ns_participant_id]?.name || '').localeCompare(participantMap[b.ns_participant_id]?.name || ''); break;
-      case 'ew': cmp = (participantMap[a.ew_participant_id]?.name || '').localeCompare(participantMap[b.ew_participant_id]?.name || ''); break;
+      case 'ns': cmp = (participantMap[a.ns_participant_id]?.number || 0) - (participantMap[b.ns_participant_id]?.number || 0); break;
+      case 'ew': cmp = (participantMap[a.ew_participant_id]?.number || 0) - (participantMap[b.ew_participant_id]?.number || 0); break;
       case 'pct': {
         const pa = pctVal(a); const pb = pctVal(b);
         cmp = (pa ?? -1) - (pb ?? -1); break;
