@@ -127,8 +127,7 @@ export default function AnalysisView({ supabase: sbProp, analysis, userId, onBac
   }
 
   const handleDownloadLin = () => {
-    const boards = displayRows.filter(r => r.board).map(r => r.board);
-    exportLinFile(boards, `${analysis.name.replace(/[^a-zA-Z0-9_-]/g, '_')}.lin`);
+    exportLinFile(displayRows, `${analysis.name.replace(/[^a-zA-Z0-9_-]/g, '_')}.lin`);
   };
 
   return (
