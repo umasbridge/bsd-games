@@ -138,10 +138,12 @@ export default function AnalysisView({ supabase: sbProp, analysis, userId, onBac
       const bn = row.board.board_number;
       const n = i + 1;
       const roomTag = row.result.room === 'open' ? 'o' : row.result.room === 'closed' ? 'c' : '';
-      lines.push(`qx|${roomTag}${n}|ah|Board ${bn}|${appendMc(row.result.lin, row.result)}`);
+      const linWithSt = row.result.lin.replace('pn|', 'st||pn|');
+      lines.push(`qx|${roomTag}${n}|ah|Board ${bn}|${appendMc(linWithSt, row.result)}`);
       if (row.otherRoom?.lin) {
         const otherTag = row.otherRoom.room === 'open' ? 'o' : row.otherRoom.room === 'closed' ? 'c' : '';
-        lines.push(`qx|${otherTag}${n}|ah|Board ${bn}|${appendMc(row.otherRoom.lin, row.otherRoom)}`);
+        const otherLinWithSt = row.otherRoom.lin.replace('pn|', 'st||pn|');
+        lines.push(`qx|${otherTag}${n}|ah|Board ${bn}|${appendMc(otherLinWithSt, row.otherRoom)}`);
       }
     });
     if (!lines.length) return;
