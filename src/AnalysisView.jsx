@@ -40,18 +40,33 @@ export default function AnalysisView({ supabase: sbProp, analysis, userId, onBac
           ? supabase.from('bg_participants').select('id, number, name, roster').eq('event_id', eventIds[0]).order('number')
           : supabase.from('bg_participants').select('id, number, name, roster').in('event_id', eventIds).order('number');
 
+        // Fetch all results, paginating to avoid Supabase 1000-row limit
+        const fetchAllResults = async () => {
+          const all = [];
+          const pageSize = 1000;
+          let from = 0;
+          while (true) {
+            const { data } = await supabase
+              .from('bg_board_results')
+              .select('*')
+              .in('stage_id', stageIds)
+              .order('id')
+              .range(from, from + pageSize - 1);
+            if (!data || data.length === 0) break;
+            all.push(...data);
+            if (data.length < pageSize) break;
+            from += pageSize;
+          }
+          return { data: all };
+        };
+
         return Promise.all([
           supabase
             .from('bg_boards')
             .select('*')
             .in('stage_id', stageIds)
             .order('board_number'),
-          supabase
-            .from('bg_board_results')
-            .select('*')
-            .in('stage_id', stageIds)
-            .order('id')
-            .limit(10000),
+          fetchAllResults(),
           participantQuery,
         ]);
       })
