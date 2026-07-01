@@ -327,6 +327,17 @@ export function buildTeamRows(boards, results, filters, participantMap) {
     });
   }
 
+  const bnSeen = {};
+  for (const r of rows) {
+    const bn = r.board?.board_number;
+    if (bn != null) {
+      bnSeen[bn] = (bnSeen[bn] || 0) + 1;
+      if (bnSeen[bn] > 1) {
+        r.displayBoardNumber = `${bn}_${bnSeen[bn] - 1}`;
+      }
+    }
+  }
+
   return rows;
 }
 
@@ -401,17 +412,22 @@ export function buildPairRows(boards, results, filters) {
     return ba - bb;
   });
 
+  const seen = {};
   return filtered.map(r => {
     const board = boardMap[r.board_id];
-    const si = multiSession && board ? stageIndex[board.stage_id] : null;
-    return {
-      board,
-      result: r,
-      otherRoom: null,
-      displayBoardNumber: multiSession && board
-        ? `${board.board_number} (${stageLabel[board.stage_id] || `S${si}`})`
-        : board?.board_number,
-    };
+    const bn = board?.board_number;
+    let displayBoardNumber = bn;
+    if (bn != null) {
+      seen[bn] = (seen[bn] || 0) + 1;
+      if (seen[bn] > 1) {
+        displayBoardNumber = `${bn}_${seen[bn] - 1}`;
+      }
+    }
+    if (multiSession && board) {
+      const si = stageIndex[board.stage_id];
+      displayBoardNumber = `${displayBoardNumber} (${stageLabel[board.stage_id] || `S${si}`})`;
+    }
+    return { board, result: r, otherRoom: null, displayBoardNumber };
   });
 }
 
