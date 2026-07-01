@@ -407,6 +407,9 @@ export function buildPairRows(boards, results, filters) {
     const sa = stageIndex[boardMap[a.board_id]?.stage_id] || 0;
     const sb = stageIndex[boardMap[b.board_id]?.stage_id] || 0;
     if (sa !== sb) return sa - sb;
+    const ra = a.round || 0;
+    const rb = b.round || 0;
+    if (ra !== rb) return ra - rb;
     const ba = boardMap[a.board_id]?.board_number || 0;
     const bb = boardMap[b.board_id]?.board_number || 0;
     return ba - bb;
