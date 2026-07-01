@@ -900,7 +900,7 @@ const SUIT_SYMBOLS_T = { S: '♠', H: '♥', D: '♦', C: '♣' };
 const DENOM_ORDER = { C: 0, D: 1, H: 2, S: 3, NT: 4 };
 
 function TravellerTable({ boardResults, participantMap, highlightParticipantId, isTeams }) {
-  const [sortKey, setSortKey] = useState(null);
+  const [sortKey, setSortKey] = useState('ns');
   const [sortAsc, setSortAsc] = useState(true);
   const [expandedIdx, setExpandedIdx] = useState(null);
 
