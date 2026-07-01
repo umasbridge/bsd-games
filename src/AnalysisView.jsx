@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase as defaultSupabase } from './supabase.js';
 import HandDiagram from './HandDiagram.jsx';
+import { exportLinFile } from './linExport.js';
 
 export default function AnalysisView({ supabase: sbProp, analysis, userId, onBack, onDisplayRows, DiscussionView }) {
   const supabase = sbProp || defaultSupabase;
@@ -126,34 +127,8 @@ export default function AnalysisView({ supabase: sbProp, analysis, userId, onBac
   }
 
   const handleDownloadLin = () => {
-    const lines = [];
-    const buildBboLin = (lin, bn, qxTag) => {
-      const md = (lin.match(/md\|[^|]+\|/) || [''])[0];
-      const sv = (lin.match(/sv\|[^|]+\|/) || [''])[0];
-      const mb = (lin.match(/mb\|.*?(?=pc\||mc\||$)/) || [''])[0];
-      const pc = (lin.match(/pc\|.*?(?=mc\||$)/) || [''])[0];
-      const mc = (lin.match(/mc\|[^|]+\|/) || [''])[0];
-      return `qx|${qxTag}|${md}rh||ah|Board ${bn}|${sv}${mb}${pc}${mc}pg||`;
-    };
-    displayRows.forEach((row, i) => {
-      if (!row.board || !row.result?.lin) return;
-      const bn = row.board.board_number;
-      const n = i + 1;
-      const roomTag = row.result.room === 'open' ? 'o' : row.result.room === 'closed' ? 'c' : '';
-      lines.push(buildBboLin(row.result.lin, bn, `${roomTag}${n}`));
-      if (row.otherRoom?.lin) {
-        const otherTag = row.otherRoom.room === 'open' ? 'o' : row.otherRoom.room === 'closed' ? 'c' : '';
-        lines.push(buildBboLin(row.otherRoom.lin, bn, `${otherTag}${n}`));
-      }
-    });
-    if (!lines.length) return;
-    const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${analysis.name.replace(/[^a-zA-Z0-9_-]/g, '_')}.lin`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const boards = displayRows.filter(r => r.board).map(r => r.board);
+    exportLinFile(boards, `${analysis.name.replace(/[^a-zA-Z0-9_-]/g, '_')}.lin`);
   };
 
   return (
