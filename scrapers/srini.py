@@ -604,6 +604,7 @@ def scrape(base_url, dry_run=False, name=None):
     Hierarchy: bg_tournaments → bg_events → bg_stages → bg_boards → bg_board_results
     """
     base_url = base_url.rstrip('/')
+    base_url = re.sub(r'/(?:index\.html|simple\.html)$', '', base_url)
 
     # 1. Validate URL
     print(f'Validating {base_url}...')
