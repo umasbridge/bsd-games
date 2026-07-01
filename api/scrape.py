@@ -14,6 +14,7 @@ class handler(BaseHTTPRequestHandler):
         try:
             data = json.loads(body)
             url = data.get('url')
+            name = data.get('name')
             if not url:
                 self._json(400, {'error': 'url is required'})
                 return
@@ -27,7 +28,7 @@ class handler(BaseHTTPRequestHandler):
             else:
                 from srini import scrape
 
-            scrape(url)
+            scrape(url, name=name)
             self._json(200, {'success': True})
 
         except ValueError as e:

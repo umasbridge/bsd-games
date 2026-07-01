@@ -598,7 +598,7 @@ def build_stage_map(settings):
 
 # ── Main scrape logic ─────────────────────────────────────────────
 
-def scrape(base_url, dry_run=False):
+def scrape(base_url, dry_run=False, name=None):
     """Scrape a Srini-format tournament and write to Supabase.
 
     Hierarchy: bg_tournaments → bg_events → bg_stages → bg_boards → bg_board_results
@@ -608,7 +608,7 @@ def scrape(base_url, dry_run=False):
     # 1. Validate URL
     print(f'Validating {base_url}...')
     settings = validate_url(base_url)
-    tournament_name = settings.get('FullName', '').strip()
+    tournament_name = name or settings.get('FullName', '').strip()
     tt = settings.get('TournamentType', 0)
     is_teams = tt == 2
     event_type = 'teams' if is_teams else 'pairs'

@@ -830,7 +830,7 @@ def _scrape_stage(session, session_ids, tournament_id, event_id, dry_run=False):
 
 # ── Main scrape logic ─────────────────────────────────────────────
 
-def scrape(url_or_id, dry_run=False):
+def scrape(url_or_id, dry_run=False, name=None):
     """Scrape an entire LoveBridge tournament from any session URL.
 
     Discovers all events and stages for the tournament, then scrapes each.
@@ -845,7 +845,7 @@ def scrape(url_or_id, dry_run=False):
     # 1. Fetch session metadata to identify the tournament
     print('Fetching session metadata...')
     session = fetch_session(first_session_id)
-    tournament_name = session.get('tournamentName', '?')
+    tournament_name = name or session.get('tournamentName', '?')
     lb_tournament_id = session.get('tournamentId')
 
     print(f'  Tournament: {tournament_name}')

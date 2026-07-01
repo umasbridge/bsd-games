@@ -617,7 +617,7 @@ def _parse_session_data(board_pages, stage_id, player_data, participant_map, sco
 
 # ── Main scrape logic ─────────────────────────────────────────────
 
-def scrape(url, dry_run=False):
+def scrape(url, dry_run=False, name=None):
     """Scrape all sessions of a BridgeWebs tournament and write to Supabase.
 
     Given any URL from a tournament, discovers all sibling sessions on the same
@@ -641,7 +641,7 @@ def scrape(url, dry_run=False):
 
     # ── Determine tournament, event, and stage names ──
     club_display = sessions[0]['club_name'] or club.upper()
-    tournament_name = f'{club_display} - {event_date}' if event_date else club_display
+    tournament_name = name or (f'{club_display} - {event_date}' if event_date else club_display)
     event_name, stage_names = _derive_names(sessions)
 
     print(f'\nTournament: {tournament_name}')
