@@ -35,104 +35,11 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
     setAnalyses(prev => prev.filter(a => a.id !== analysis.id));
   };
 
-  const DEALER_TO_LIN = { N: '3', E: '4', S: '1', W: '2' };
-  const VUL_TO_LIN = { none: 'o', ns: 'n', ew: 'e', both: 'b' };
-  const SUIT_ORDER = ['S', 'H', 'D', 'C'];
-  const DIR_ORDER = ['S', 'W', 'N', 'E'];
-
-  const buildMd = (board) => {
-    const dealer = board.dealer || 'N';
-    const dealerNum = DEALER_TO_LIN[dealer] || '3';
-    // BBO md| always lists hands in S,W,N,E order
-    const hands = ['s', 'w', 'n', 'e'].map(d =>
-      SUIT_ORDER.map(s => {
-        const key = `${d}_${s === 'S' ? 'spades' : s === 'H' ? 'hearts' : s === 'D' ? 'diamonds' : 'clubs'}`;
-        return s + (board[key] || '');
-      }).join('')
-    );
-    return `md|${dealerNum}${hands.join(',')}`;
-  };
-
-  const patchLin = (lin, board, result) => {
-    const md = buildMd(board);
-    const sv = `sv|${VUL_TO_LIN[board.vulnerability] || 'o'}`;
-    // Fix pn| to BBO order: S,W,N,E
-    const pn = `pn|${result?.player_s_name || ''},${result?.player_w_name || ''},${result?.player_n_name || ''},${result?.player_e_name || ''}`;
-    let patched = lin.replace(/md\|[^|]*/, md).replace(/sv\|[^|]*/, sv);
-    if (result?.player_n_name) patched = patched.replace(/pn\|[^|]*/, pn);
-    return patched;
-  };
-
-  const buildLinFromRows = (rows, analysisName) => {
-    const lines = [];
-    rows.forEach((row, i) => {
-      if (!row.board || !row.result?.lin) return;
-      const bn = row.board.board_number;
-      const roomTag = row.result.room === 'open' ? 'o' : row.result.room === 'closed' ? 'c' : '';
-      lines.push(`qx|${roomTag}${bn}|ah|Board ${bn}|${patchLin(row.result.lin, row.board, row.result)}`);
-      if (row.otherRoom?.lin) {
-        const otherTag = row.otherRoom.room === 'open' ? 'o' : row.otherRoom.room === 'closed' ? 'c' : '';
-        lines.push(`qx|${otherTag}${bn}|ah|Board ${bn}|${patchLin(row.otherRoom.lin, row.board, row.otherRoom)}`);
-      }
-    });
-    if (!lines.length) return;
-    const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${analysisName.replace(/[^a-zA-Z0-9_-]/g, '_')}.lin`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
   const handleDownloadLin = async (analysis) => {
-    // Use cached displayRows if available (exact match with viewer)
-    const cached = displayRowsCache?.[analysis.id];
-    if (cached) {
-      buildLinFromRows(cached, analysis.name);
-      return;
-    }
-
-    // Fallback: fetch and compute (user hasn't viewed this analysis yet)
     setDownloading(analysis.id);
     try {
-      const filters = analysis.filters || {};
-      const event = analysis.bg_events;
-      const eventId = event?.id;
-      const isTeams = event?.type === 'teams';
-
-      let stageIds;
-      if (filters.stage_ids?.length) {
-        stageIds = filters.stage_ids;
-      } else if (filters.stage_id) {
-        stageIds = [filters.stage_id];
-      } else if (eventId) {
-        const { data: stages } = await sb.from('bg_stages').select('id').eq('event_id', eventId);
-        stageIds = (stages || []).map(s => s.id);
-      }
-      if (!stageIds?.length) { setDownloading(null); return; }
-
-      const eventIds = filters.selections?.length
-        ? [...new Set(filters.selections.map(s => s.event_id))]
-        : [eventId];
-      const participantQuery = eventIds.length === 1
-        ? sb.from('bg_participants').select('id, number, name, roster').eq('event_id', eventIds[0])
-        : sb.from('bg_participants').select('id, number, name, roster').in('event_id', eventIds);
-
-      const [{ data: boards }, { data: results }, { data: participants }] = await Promise.all([
-        sb.from('bg_boards').select('*').in('stage_id', stageIds).order('board_number'),
-        sb.from('bg_board_results').select('*').in('stage_id', stageIds).order('id'),
-        participantQuery,
-      ]);
-
-      const participantMap = {};
-      for (const p of (participants || [])) participantMap[p.id] = p;
-
-      const rows = isTeams
-        ? buildTeamRows(boards || [], results || [], filters, participantMap)
-        : buildPairRows(boards || [], results || [], filters);
-
-      buildLinFromRows(rows, analysis.name);
+      const { downloadLin } = await import('./linExport.js');
+      await downloadLin(sb, analysis);
     } catch (e) {
       console.error('LIN download failed:', e);
     }

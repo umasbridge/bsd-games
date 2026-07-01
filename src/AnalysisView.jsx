@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase as defaultSupabase } from './supabase.js';
 import HandDiagram from './HandDiagram.jsx';
-import { exportLinFile } from './linExport.js';
 
 export default function AnalysisView({ supabase: sbProp, analysis, userId, onBack, onDisplayRows, DiscussionView }) {
   const supabase = sbProp || defaultSupabase;
@@ -126,9 +125,6 @@ export default function AnalysisView({ supabase: sbProp, analysis, userId, onBac
     );
   }
 
-  const handleDownloadLin = () => {
-    exportLinFile(displayRows, `${analysis.name.replace(/[^a-zA-Z0-9_-]/g, '_')}.lin`);
-  };
 
   return (
     <div className="bg-white min-h-screen">
