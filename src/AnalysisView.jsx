@@ -900,7 +900,7 @@ const SUIT_SYMBOLS_T = { S: '♠', H: '♥', D: '♦', C: '♣' };
 const DENOM_ORDER = { C: 0, D: 1, H: 2, S: 3, NT: 4 };
 
 function TravellerTable({ boardResults, participantMap, highlightParticipantId, isTeams }) {
-  const [sortKey, setSortKey] = useState('ns');
+  const [sortKey, setSortKey] = useState(null);
   const [sortAsc, setSortAsc] = useState(true);
   const [expandedIdx, setExpandedIdx] = useState(null);
 
@@ -922,7 +922,7 @@ function TravellerTable({ boardResults, participantMap, highlightParticipantId, 
     return sortAsc ? ' ▲' : ' ▼';
   };
 
-  const sorted = [...boardResults].sort((a, b) => {
+  const sorted = sortKey ? [...boardResults].sort((a, b) => {
     const dir = sortAsc ? 1 : -1;
     if (a.passed_out && !b.passed_out) return 1;
     if (!a.passed_out && b.passed_out) return -1;
@@ -950,7 +950,7 @@ function TravellerTable({ boardResults, participantMap, highlightParticipantId, 
       default: break;
     }
     return cmp * dir;
-  });
+  }) : boardResults;
 
   const thClass = "py-1.5 px-1.5 text-left font-medium cursor-pointer hover:bg-gray-100 select-none whitespace-nowrap";
 
