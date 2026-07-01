@@ -716,6 +716,7 @@ def scrape(base_url, dry_run=False, name=None):
     results_by_stage = {}  # stage_name → [result_row, ...]
     errors = []
 
+    seq = 0
     for board_num in all_boards:
         try:
             board_data = fetch_json(f'{base_url}/p{board_num}.json')
@@ -733,6 +734,9 @@ def scrape(base_url, dry_run=False, name=None):
         if board_row is None:
             errors.append(f'Board {board_num}: no hand record')
             continue
+
+        seq += 1
+        board_row['board_number'] = seq
 
         boards_by_stage.setdefault(stage_name, []).append(board_row)
 
@@ -752,7 +756,7 @@ def scrape(base_url, dry_run=False, name=None):
                 )
                 if result is None:
                     continue
-                result['_board_number'] = bn
+                result['_board_number'] = seq
                 results_by_stage.setdefault(stage_name, []).append(result)
             except Exception as e:
                 errors.append(f'Board {bn}, entry: {e}')
