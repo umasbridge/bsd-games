@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { supabase as defaultSupabase } from './supabase.js';
 import { buildTeamRows, buildPairRows } from './AnalysisView.jsx';
 
-export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAdmin, onNew, onRetrieve, onOpen, onCreateNew, onLogout, onBack, Header, displayRowsCache }) {
+export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAdmin, onNew, onRetrieve, onOpen, onCreateNew, onLogout, onBack, Header, displayRowsCache, onDownloadLin }) {
   const sb = sbProp || defaultSupabase;
   const [analyses, setAnalyses] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -36,10 +36,10 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
   };
 
   const handleDownloadLin = async (analysis) => {
+    if (!onDownloadLin) return;
     setDownloading(analysis.id);
     try {
-      const { downloadLin } = await import('./linExport.js');
-      await downloadLin(sb, analysis);
+      await onDownloadLin(analysis);
     } catch (e) {
       console.error('LIN download failed:', e);
     }

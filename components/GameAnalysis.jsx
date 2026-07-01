@@ -4,7 +4,7 @@ import RetrieveDeals from '../src/RetrieveDeals.jsx';
 import OpenConfig from '../src/OpenConfig.jsx';
 import AnalysisView from '../src/AnalysisView.jsx';
 
-export default function GameAnalysis({ supabase, userId, userEmail, isAdmin, onLogout, onBack, Header, DiscussionView }) {
+export default function GameAnalysis({ supabase, userId, userEmail, isAdmin, onLogout, onBack, Header, DiscussionView, onDownloadLin }) {
   const [view, setView] = useState('list');
   const [activeAnalysis, setActiveAnalysis] = useState(null);
   const [selectedStages, setSelectedStages] = useState(null);
@@ -81,6 +81,7 @@ export default function GameAnalysis({ supabase, userId, userEmail, isAdmin, onL
       onBack={onBack}
       Header={Header}
       displayRowsCache={displayRowsCache.current}
+      onDownloadLin={onDownloadLin}
     />
   );
 }
