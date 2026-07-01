@@ -442,6 +442,24 @@ export function CreateDealSetPicker({ supabase: sbProp, onBack, onRetrieve, onCr
     setLoadingTournaments(false);
   };
 
+  const handleDeleteTournament = async (tourn) => {
+    if (!confirm(`Delete "${tourn.name}" and all its data? This cannot be undone.`)) return;
+    const eventIds = (tourn.bg_events || []).map(e => e.id);
+    const stageIds = (tourn.bg_events || []).flatMap(e => (e.bg_stages || []).map(s => s.id));
+    if (stageIds.length) {
+      await sb.from('bg_board_results').delete().in('stage_id', stageIds);
+      await sb.from('bg_boards').delete().in('stage_id', stageIds);
+      await sb.from('bg_stages').delete().in('id', stageIds);
+    }
+    if (eventIds.length) {
+      await sb.from('bg_participants').delete().in('event_id', eventIds);
+      await sb.from('bg_events').delete().in('id', eventIds);
+    }
+    await sb.from('bg_tournaments').delete().eq('id', tourn.id);
+    setSelectedStages(prev => prev.filter(s => s.tournamentId !== tourn.id));
+    await loadTournaments();
+  };
+
   const handleStageToggle = (ev, stg, tourn) => {
     setSelectedStages(prev => {
       const exists = prev.find(s => s.stageId === stg.id);
@@ -551,6 +569,7 @@ export function CreateDealSetPicker({ supabase: sbProp, onBack, onRetrieve, onCr
             onTournamentToggle={handleTournamentToggle}
             selectedStageIds={selectedStageIds}
             onRetrieveStage={handleRetrieveStage}
+            onDelete={handleDeleteTournament}
           />
         )}
 
@@ -568,7 +587,7 @@ export function CreateDealSetPicker({ supabase: sbProp, onBack, onRetrieve, onCr
 }
 
 
-function TournamentPicker({ tournaments, expandedTournaments, setExpandedTournaments, onStageToggle, onTournamentToggle, selectedStageIds, onRetrieveStage }) {
+function TournamentPicker({ tournaments, expandedTournaments, setExpandedTournaments, onStageToggle, onTournamentToggle, selectedStageIds, onRetrieveStage, onDelete }) {
   const groups = { teams: [], pairs: [] };
   for (const t of tournaments) {
     const teamsEvents = (t.bg_events || []).filter(e => e.type === 'teams');
@@ -598,6 +617,7 @@ function TournamentPicker({ tournaments, expandedTournaments, setExpandedTournam
                 onTournamentToggle={() => onTournamentToggle(t)}
                 selectedStageIds={selectedStageIds}
                 onRetrieveStage={onRetrieveStage}
+                onDelete={() => onDelete(t)}
               />
             ))}
           </div>
@@ -608,7 +628,7 @@ function TournamentPicker({ tournaments, expandedTournaments, setExpandedTournam
 }
 
 
-function TournamentRow({ tournament, expanded, onToggle, onStageToggle, onTournamentToggle, selectedStageIds, onRetrieveStage }) {
+function TournamentRow({ tournament, expanded, onToggle, onStageToggle, onTournamentToggle, selectedStageIds, onRetrieveStage, onDelete }) {
   const t = tournament;
   const events = t.bg_events || [];
   const allStages = events.flatMap(ev => (ev.bg_stages || []).map(stg => ({ ev, stg })));
@@ -622,17 +642,20 @@ function TournamentRow({ tournament, expanded, onToggle, onStageToggle, onTourna
     const single = allStages[0];
     if (!single) return null;
     return (
-      <label className="flex items-center px-4 py-3 border border-gray-200 rounded-lg bg-white hover:bg-blue-50 cursor-pointer">
-        <input
-          type="checkbox"
-          checked={selectedStageIds.has(single.stg.id)}
-          onChange={() => single.stg.scraped && onStageToggle(single.ev, single.stg)}
-          disabled={!single.stg.scraped}
-          className="rounded mr-3"
-        />
-        <span className="text-base font-bold text-gray-800 flex-1">{t.name}</span>
-        {single.stg.scraped && <span className="text-xs text-gray-400">{single.stg.boardCount} boards</span>}
-      </label>
+      <div className="flex items-center px-4 py-3 border border-gray-200 rounded-lg bg-white hover:bg-blue-50">
+        <label className="flex items-center flex-1 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={selectedStageIds.has(single.stg.id)}
+            onChange={() => single.stg.scraped && onStageToggle(single.ev, single.stg)}
+            disabled={!single.stg.scraped}
+            className="rounded mr-3"
+          />
+          <span className="text-base font-bold text-gray-800 flex-1">{t.name}</span>
+          {single.stg.scraped && <span className="text-xs text-gray-400">{single.stg.boardCount} boards</span>}
+        </label>
+        <button onClick={onDelete} className="ml-2 text-xs text-red-400 hover:text-red-600">Delete</button>
+      </div>
     );
   }
 
@@ -650,7 +673,8 @@ function TournamentRow({ tournament, expanded, onToggle, onStageToggle, onTourna
           <span className="text-gray-400 text-xs mr-2">{expanded ? '▾' : '▸'}</span>
           <span className="text-base font-bold text-gray-800 flex-1">{t.name}</span>
         </button>
-        <span className="text-xs text-gray-400">{totalBoards} boards</span>
+        <span className="text-xs text-gray-400 mr-2">{totalBoards} boards</span>
+        <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="text-xs text-red-400 hover:text-red-600">Delete</button>
       </div>
 
       {expanded && allStages.map(({ ev, stg }) => (
