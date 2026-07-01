@@ -420,8 +420,8 @@ export default function OpenConfig({ supabase: sbProp, userId, analysis, tournam
             })()}
           </div>
 
-          {/* Stage selection (only if multiple stages) */}
-          {hasMultipleStages && (
+          {/* Stage selection (only if editing existing analysis, not creating new) */}
+          {hasMultipleStages && !selectedStagesProp && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Stages</label>
               <div className="space-y-1">
@@ -512,7 +512,7 @@ function Header({ onBack }) {
       <button onClick={onBack} className="px-2 py-1 text-sm border border-gray-300 rounded hover:bg-gray-50">
         &larr; Back
       </button>
-      <h1 className="text-lg font-bold">Open Deal Set</h1>
+      <h1 className="text-lg font-bold">Create Deal Set</h1>
     </div>
   );
 }

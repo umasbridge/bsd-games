@@ -805,6 +805,131 @@ def _parse_float(s):
         return None
 
 
+# ── Discovery ────────────────────────────────────────────────────
+
+def _fetch_results_list_dates(club):
+    """Fetch the results list page and extract unique dates (YYYYMMDD)."""
+    url = f'https://www.bridgewebs.com/cgi-bin/bwor/bw.cgi?pid=results_list&club={club}'
+    req = urllib.request.Request(url, headers={
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+        'Accept': '*/*',
+    })
+    with urllib.request.urlopen(req, context=_ssl_ctx) as resp:
+        html = resp.read().decode('utf-8', errors='replace')
+
+    MONTHS = {'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04', 'may': '05', 'jun': '06',
+              'jul': '07', 'aug': '08', 'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12'}
+    dates = set()
+    for m in re.finditer(r'(\d{1,2})(?:st|nd|rd|th)?\s+(\w+)\s+(\d{4})', html):
+        day, month_str, year = m.group(1), m.group(2).lower()[:3], m.group(3)
+        month = MONTHS.get(month_str)
+        if month:
+            dates.add(f'{year}{month}{day.zfill(2)}')
+    return sorted(dates)
+
+
+def discover_club(url):
+    """Discover all events and sessions for a BridgeWebs club.
+
+    Returns {club, club_name, events: [{name, scoring, dates, sessions: [{event_key, date, title, session_name, boards}]}]}
+    """
+    import json
+
+    club, event = parse_bridgewebs_url(url)
+    print(f'Club: {club}')
+
+    # Get the club display name
+    _, club_name = fetch_event_title(club, event)
+    print(f'Club name: {club_name}')
+
+    # Find dates: start from the URL's date and probe ±30 days
+    from datetime import datetime, timedelta
+    base_date_str = re.match(r'(\d{8})', event).group(1)
+    base_date = datetime.strptime(base_date_str, '%Y%m%d')
+    # Also try dates from the results list page
+    list_dates = set(_fetch_results_list_dates(club))
+    probe_dates = set()
+    for d in range(-30, 31):
+        probe_dates.add((base_date + timedelta(days=d)).strftime('%Y%m%d'))
+    probe_dates.update(list_dates)
+    dates = sorted(probe_dates)
+    print(f'  Probing {len(dates)} dates around {base_date_str}...')
+
+    # Probe each date for sessions (title-only first pass for speed)
+    all_sessions = []
+    for date_str in dates:
+        for n in range(1, 20):
+            event_key = f'{date_str}_{n}'
+            try:
+                result_title, _ = fetch_event_title(club, event_key)
+            except Exception:
+                break
+            if not result_title:
+                break
+
+            session_name = _strip_date_prefix(result_title)
+            if not session_name:
+                break
+
+            # Quick check: fetch travs XML to count boards
+            try:
+                xml_text = fetch_travs_xml(club, event_key)
+                pages = parse_pages(xml_text)
+                board_pages = [p for p in pages if p.get('view') == '3']
+            except Exception:
+                break
+            if not board_pages:
+                break
+
+            event_date = _event_date(event_key)
+            all_sessions.append({
+                'event_key': event_key,
+                'date': event_date,
+                'title': session_name,
+                'boards': len(board_pages),
+            })
+            print(f'  {event_key}: {session_name} ({len(board_pages)} boards)')
+
+    # Group sessions by event name (strip session number suffix)
+    events = {}
+    for sess in all_sessions:
+        # Strip "Session N", "S-N", "S1", or trailing "N" after dash
+        event_name = re.sub(r'\s*[-–]\s*(?:Session|S)?\s*\d+\s*$', '', sess['title'], flags=re.IGNORECASE).strip()
+        if not event_name:
+            event_name = sess['title']
+        if event_name not in events:
+            events[event_name] = {
+                'name': event_name,
+                'sessions': [],
+                'dates': set(),
+            }
+        events[event_name]['sessions'].append(sess)
+        events[event_name]['dates'].add(sess['date'])
+
+    # Detect scoring for each event (check first session)
+    for ev in events.values():
+        first_key = ev['sessions'][0]['event_key']
+        ev['scoring'] = detect_scoring(club, first_key)
+        ev['dates'] = sorted(ev['dates'])
+
+    result = {
+        'club': club,
+        'club_name': club_name,
+        'events': list(events.values()),
+    }
+
+    print(f'\n=== Discovery Summary ===')
+    print(f'Club: {club_name} ({club})')
+    for ev in result['events']:
+        print(f'\n  {ev["name"]} [{ev["scoring"].upper()}]')
+        print(f'    Dates: {", ".join(ev["dates"])}')
+        for sess in ev['sessions']:
+            print(f'    - {sess["title"]} ({sess["event_key"]}, {sess["boards"]} boards)')
+
+    print(f'\n{json.dumps(result, default=list)}')
+    return result
+
+
 # ── CLI ───────────────────────────────────────────────────────────
 
 def main():
@@ -814,10 +939,15 @@ def main():
     parser.add_argument('url', help='BridgeWebs results URL')
     parser.add_argument('--dry-run', action='store_true',
                         help='Validate and parse without writing to database')
+    parser.add_argument('--discover', action='store_true',
+                        help='Discover all events and sessions without scraping')
     args = parser.parse_args()
 
     try:
-        scrape(args.url, dry_run=args.dry_run)
+        if args.discover:
+            discover_club(args.url)
+        else:
+            scrape(args.url, dry_run=args.dry_run)
     except ValueError as e:
         print(f'ERROR: {e}', file=sys.stderr)
         sys.exit(1)

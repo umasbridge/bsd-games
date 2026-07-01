@@ -404,6 +404,7 @@ export function CreateDealSetPicker({ supabase: sbProp, onBack, onRetrieve, onCr
   const [loadingTournaments, setLoadingTournaments] = useState(true);
   const [expandedTournaments, setExpandedTournaments] = useState({});
   const [selectedStages, setSelectedStages] = useState([]);
+  const [retrievingStage, setRetrievingStage] = useState(null);
 
   const selectedStageIds = new Set(selectedStages.map(s => s.stageId));
 
@@ -415,7 +416,9 @@ export function CreateDealSetPicker({ supabase: sbProp, onBack, onRetrieve, onCr
       .select(`
         id, name, location, date_start, source_format,
         bg_events ( id, name, type, scoring, event_order,
-          bg_stages ( id, name, stage_order )
+          bg_stages ( id, name, stage_order, source_url, source_meta,
+            bg_boards ( id )
+          )
         )
       `)
       .order('created_at', { ascending: false });
@@ -426,7 +429,13 @@ export function CreateDealSetPicker({ supabase: sbProp, onBack, onRetrieve, onCr
         .sort((a, b) => (a.event_order || 0) - (b.event_order || 0))
         .map(e => ({
           ...e,
-          bg_stages: (e.bg_stages || []).sort((a, b) => (a.stage_order || 0) - (b.stage_order || 0)),
+          bg_stages: (e.bg_stages || []).sort((a, b) => (a.stage_order || 0) - (b.stage_order || 0))
+            .map(s => ({
+              ...s,
+              scraped: (s.bg_boards || []).length > 0,
+              boardCount: (s.bg_boards || []).length,
+              bg_boards: undefined,
+            })),
         })),
     }));
     setTournaments(sorted);
@@ -467,6 +476,48 @@ export function CreateDealSetPicker({ supabase: sbProp, onBack, onRetrieve, onCr
     });
   };
 
+  const handleRetrieveStage = async (stages) => {
+    const list = Array.isArray(stages) ? stages : [stages];
+    if (!list.length) return;
+    setRetrievingStage(true);
+
+    // Group stages by their scrape URL (BridgeWebs scraper discovers siblings automatically)
+    // Use the first stage's URL to trigger scraping, pass all as mappings
+    const firstUrl = list[0].source_url;
+    const mappings = list.map(stg => {
+      const eventId = tournaments.flatMap(t => t.bg_events || [])
+        .find(ev => (ev.bg_stages || []).some(s => s.id === stg.id))?.id;
+      return { stageId: stg.id, eventId, sourceUrl: stg.source_url };
+    }).filter(m => m.eventId);
+
+    try {
+      await fetch('/api/scrape-stage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: firstUrl, mappings }),
+      });
+    } catch (e) {
+      console.error('Retrieve failed:', e);
+    }
+
+    await loadTournaments();
+    setRetrievingStage(null);
+  };
+
+  if (retrievingStage) {
+    return (
+      <div className="min-h-screen bg-gray-100">
+        <div className="bg-white border-b border-gray-200 px-6 py-4">
+          <h1 className="text-lg font-bold">Retrieving...</h1>
+        </div>
+        <div className="px-6 py-8 text-center">
+          <div className="inline-block animate-spin w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full mb-3"></div>
+          <p className="text-sm text-gray-600">Retrieving deals...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-100">
       <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
@@ -499,6 +550,7 @@ export function CreateDealSetPicker({ supabase: sbProp, onBack, onRetrieve, onCr
             onStageToggle={handleStageToggle}
             onTournamentToggle={handleTournamentToggle}
             selectedStageIds={selectedStageIds}
+            onRetrieveStage={handleRetrieveStage}
           />
         )}
 
@@ -516,7 +568,7 @@ export function CreateDealSetPicker({ supabase: sbProp, onBack, onRetrieve, onCr
 }
 
 
-function TournamentPicker({ tournaments, expandedTournaments, setExpandedTournaments, onStageToggle, onTournamentToggle, selectedStageIds }) {
+function TournamentPicker({ tournaments, expandedTournaments, setExpandedTournaments, onStageToggle, onTournamentToggle, selectedStageIds, onRetrieveStage }) {
   const groups = { teams: [], pairs: [] };
   for (const t of tournaments) {
     const teamsEvents = (t.bg_events || []).filter(e => e.type === 'teams');
@@ -545,6 +597,7 @@ function TournamentPicker({ tournaments, expandedTournaments, setExpandedTournam
                 onStageToggle={(ev, stg) => onStageToggle(ev, stg, t)}
                 onTournamentToggle={() => onTournamentToggle(t)}
                 selectedStageIds={selectedStageIds}
+                onRetrieveStage={onRetrieveStage}
               />
             ))}
           </div>
@@ -555,15 +608,12 @@ function TournamentPicker({ tournaments, expandedTournaments, setExpandedTournam
 }
 
 
-function TournamentRow({ tournament, expanded, onToggle, onStageToggle, onTournamentToggle, selectedStageIds }) {
+function TournamentRow({ tournament, expanded, onToggle, onStageToggle, onTournamentToggle, selectedStageIds, onRetrieveStage }) {
   const t = tournament;
   const events = t.bg_events || [];
   const allStages = events.flatMap(ev => (ev.bg_stages || []).map(stg => ({ ev, stg })));
-
-  const totalStages = allStages.length;
-  const selectedCount = allStages.filter(({ stg }) => selectedStageIds.has(stg.id)).length;
-  const allChecked = totalStages > 0 && selectedCount === totalStages;
-  const someChecked = selectedCount > 0 && !allChecked;
+  const scrapedStages = allStages.filter(({ stg }) => stg.scraped);
+  const [expandedEvents, setExpandedEvents] = useState({});
 
   return (
     <div className="border border-gray-200 rounded-lg bg-white overflow-hidden">
@@ -572,23 +622,59 @@ function TournamentRow({ tournament, expanded, onToggle, onStageToggle, onTourna
         className="w-full flex items-center px-4 py-3 bg-gray-50 hover:bg-gray-100 text-left"
       >
         <span className="text-gray-400 text-xs mr-2">{expanded ? '▾' : '▸'}</span>
-        <span className="text-base font-bold text-gray-800">{t.name}</span>
+        <span className="text-base font-bold text-gray-800 flex-1">{t.name}</span>
+        <span className="text-xs text-gray-400">
+          {scrapedStages.length}/{allStages.length} retrieved
+        </span>
       </button>
 
-      {expanded && allStages.map(({ ev, stg }) => (
-        <label
-          key={stg.id}
-          className="flex items-center pl-10 pr-4 py-2 hover:bg-blue-50 border-t border-gray-100 cursor-pointer"
-        >
-          <input
-            type="checkbox"
-            checked={selectedStageIds.has(stg.id)}
-            onChange={() => onStageToggle(ev, stg)}
-            className="rounded mr-3"
-          />
-          <span className="text-sm text-gray-700">{stg.name}</span>
-        </label>
-      ))}
+      {expanded && events.map(ev => {
+        const stages = ev.bg_stages || [];
+        const isExpanded = !!expandedEvents[ev.id];
+        const scrapedCount = stages.filter(s => s.scraped).length;
+        const allScraped = scrapedCount === stages.length;
+
+        return (
+          <div key={ev.id} className="border-t border-gray-200">
+            <div className="flex items-center px-4 py-2 pl-8 hover:bg-gray-50">
+              <button
+                onClick={() => setExpandedEvents(prev => ({ ...prev, [ev.id]: !prev[ev.id] }))}
+                className="flex-1 text-left flex items-center"
+              >
+                <span className="text-gray-400 text-xs mr-2">{isExpanded ? '▾' : '▸'}</span>
+                <span className="text-sm font-semibold text-gray-700 flex-1">{ev.name}</span>
+              </button>
+              <span className="text-xs text-gray-400 mr-2">{scrapedCount}/{stages.length}</span>
+              {!allScraped && onRetrieveStage && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onRetrieveStage(stages.filter(s => !s.scraped && s.source_url)); }}
+                  className="text-xs px-2 py-1 bg-green-600 text-white rounded hover:bg-green-700"
+                >
+                  Retrieve {stages.length - scrapedCount}
+                </button>
+              )}
+            </div>
+
+            {isExpanded && stages.map(stg => (
+              <label
+                key={stg.id}
+                className={`flex items-center pl-14 pr-4 py-2 border-t border-gray-100 ${stg.scraped ? 'hover:bg-blue-50 cursor-pointer' : 'opacity-50'}`}
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedStageIds.has(stg.id)}
+                  onChange={() => stg.scraped && onStageToggle(ev, stg)}
+                  disabled={!stg.scraped}
+                  className="rounded mr-3"
+                />
+                <span className="text-sm text-gray-700 flex-1">{stg.name}</span>
+                {stg.scraped && <span className="text-xs text-gray-400">{stg.boardCount} boards</span>}
+                {!stg.scraped && <span className="text-xs text-gray-400 italic">pending</span>}
+              </label>
+            ))}
+          </div>
+        );
+      })}
     </div>
   );
 }

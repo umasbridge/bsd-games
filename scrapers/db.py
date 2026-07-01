@@ -184,3 +184,58 @@ def stage_exists(source_url: str) -> bool:
             .eq('source_url', source_url)
             .execute())
     return len(resp.data) > 0
+
+
+def move_stage_data(source_stage_id: str, target_stage_id: str, target_event_id: str):
+    """Move boards and results from source stage to target stage, then clean up source."""
+    c = get_client()
+
+    # Move boards
+    c.table('bg_boards').update({'stage_id': target_stage_id}).eq('stage_id', source_stage_id).execute()
+
+    # Move results
+    c.table('bg_board_results').update({'stage_id': target_stage_id}).eq('stage_id', source_stage_id).execute()
+
+    # Move participants to target event (if not already there)
+    source_stage = c.table('bg_stages').select('event_id').eq('id', source_stage_id).single().execute()
+    if source_stage.data:
+        source_event_id = source_stage.data['event_id']
+        if source_event_id != target_event_id:
+            source_parts = c.table('bg_participants').select('*').eq('event_id', source_event_id).execute()
+            existing = find_participants(target_event_id)
+            for p in (source_parts.data or []):
+                if p['number'] not in existing:
+                    c.table('bg_participants').update({'event_id': target_event_id}).eq('id', p['id']).execute()
+                else:
+                    # Update result references from old participant to existing one
+                    old_id = p['id']
+                    new_id = existing[p['number']]
+                    c.table('bg_board_results').update({'ns_participant_id': new_id}).eq('ns_participant_id', old_id).eq('stage_id', target_stage_id).execute()
+                    c.table('bg_board_results').update({'ew_participant_id': new_id}).eq('ew_participant_id', old_id).eq('stage_id', target_stage_id).execute()
+                    c.table('bg_participants').delete().eq('id', old_id).execute()
+
+
+def cleanup_empty_hierarchy(stage_id: str):
+    """Delete a stage and its parent event/tournament if they become empty."""
+    c = get_client()
+    stage = c.table('bg_stages').select('id, event_id').eq('id', stage_id).single().execute()
+    if not stage.data:
+        return
+    event_id = stage.data['event_id']
+
+    # Delete the empty stage
+    c.table('bg_stages').delete().eq('id', stage_id).execute()
+
+    # Check if event is now empty
+    remaining = c.table('bg_stages').select('id').eq('event_id', event_id).limit(1).execute()
+    if not remaining.data:
+        event = c.table('bg_events').select('tournament_id').eq('id', event_id).single().execute()
+        tournament_id = event.data['tournament_id'] if event.data else None
+        c.table('bg_participants').delete().eq('event_id', event_id).execute()
+        c.table('bg_events').delete().eq('id', event_id).execute()
+
+        # Check if tournament is now empty
+        if tournament_id:
+            remaining_ev = c.table('bg_events').select('id').eq('tournament_id', tournament_id).limit(1).execute()
+            if not remaining_ev.data:
+                c.table('bg_tournaments').delete().eq('id', tournament_id).execute()
