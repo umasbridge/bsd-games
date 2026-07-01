@@ -109,9 +109,7 @@ def generate_lin(*, dealer, vulnerability, hands, contract_level=None,
     elif passed_out:
         parts.append('mb|pppp')
     elif contract_level and contract_denom and declarer:
-        # No full bidding available — encode just the final contract as a minimal auction
-        # This is lossy but captures what we know
-        pass  # Skip mb| if we don't have the actual bidding
+        pass
 
     # Opening lead
     if lead_suit and lead_rank:
@@ -128,8 +126,10 @@ def generate_lin(*, dealer, vulnerability, hands, contract_level=None,
                     r = _RANK_TO_LIN.get(card.get('rank', ''), '')
                     parts.append(f'pc|{s}{r}')
 
-    # Claim
+    # Claim / result tricks
     if claim_tricks is not None:
         parts.append(f'mc|{claim_tricks}')
+    elif tricks is not None and contract_level:
+        parts.append(f'mc|{tricks}')
 
     return '|'.join(parts) + '|'
