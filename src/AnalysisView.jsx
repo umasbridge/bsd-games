@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase as defaultSupabase } from './supabase.js';
-import HandDiagram from './HandDiagram.jsx';
+import HandDiagram, { BiddingTable } from './HandDiagram.jsx';
 
 export default function AnalysisView({ supabase: sbProp, analysis, userId, onBack, onDisplayRows, DiscussionView }) {
   const supabase = sbProp || defaultSupabase;
@@ -186,7 +186,7 @@ export function buildTeamRows(boards, results, filters, participantMap) {
   const groups = {};
   for (const r of sorted) {
     if (!r.match_id) continue;
-    const key = `${r.board_id}__${r.match_id}`;
+    const key = `${r.board_id}__${r.match_id}__${r.round || ''}`;
     if (!groups[key]) groups[key] = {};
     if (r.room === 'open') groups[key].open = r;
     else if (r.room === 'closed') groups[key].closed = r;
@@ -305,15 +305,8 @@ export function buildTeamRows(boards, results, filters, participantMap) {
     });
   }
 
-  const bnSeen = {};
-  for (const r of rows) {
-    const bn = r.board?.board_number;
-    if (bn != null) {
-      bnSeen[bn] = (bnSeen[bn] || 0) + 1;
-      if (bnSeen[bn] > 1) {
-        r.displayBoardNumber = `${bn}_${bnSeen[bn] - 1}`;
-      }
-    }
+  for (let i = 0; i < rows.length; i++) {
+    rows[i].displayBoardNumber = i + 1;
   }
 
   return rows;
@@ -393,22 +386,9 @@ export function buildPairRows(boards, results, filters) {
     return ba - bb;
   });
 
-  const seen = {};
-  return filtered.map(r => {
+  return filtered.map((r, i) => {
     const board = boardMap[r.board_id];
-    const bn = board?.board_number;
-    let displayBoardNumber = bn;
-    if (bn != null) {
-      seen[bn] = (seen[bn] || 0) + 1;
-      if (seen[bn] > 1) {
-        displayBoardNumber = `${bn}_${seen[bn] - 1}`;
-      }
-    }
-    if (multiSession && board) {
-      const si = stageIndex[board.stage_id];
-      displayBoardNumber = `${displayBoardNumber} (${stageLabel[board.stage_id] || `S${si}`})`;
-    }
-    return { board, result: r, otherRoom: null, displayBoardNumber };
+    return { board, result: r, otherRoom: null, displayBoardNumber: i + 1 };
   });
 }
 
@@ -507,34 +487,136 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
     const weAreDeclaring = ourSideIsNs === declarerIsNs;
 
     if (isTeams) {
-      // Teams: keep existing best-for logic (simplified)
-      const nsVul = isVul('ns', b.vulnerability);
-      const ewVul = isVul('ew', b.vulnerability);
-      const ns = bestDDContract(b, 'ns', nsVul);
-      const ew = bestDDContract(b, 'ew', ewVul);
-      const resultLines = [];
-      for (const [side, best] of [['NS', ns], ['EW', ew]]) {
-        if (!best) continue;
-        const line = {
-          label: side,
-          contract: { level: best.level, denom: best.denom, x: '', dir: best.dir, ot: best.tricks - (best.level + 6) },
-          nsScore: side === 'NS' ? best.score : -best.score,
-        };
-        if (row.otherRoom) {
-          const swapped = r.ns_participant_id === row.otherRoom.ew_participant_id;
-          const otherNs = swapped ? -(row.otherRoom.score || 0) : (row.otherRoom.score || 0);
-          const isNs = ourParticipantId ? r.ns_participant_id === ourParticipantId : true;
-          const ourScore = isNs ? line.nsScore : -line.nsScore;
-          const ourOther = isNs ? otherNs : -otherNs;
-          line.imps = scoreToImps(ourScore + ourOther);
-        }
-        if (fieldScores) {
-          line.nsMp = calcMpPct(line.nsScore, fieldScores, 'ns');
-          line.ewMp = calcMpPct(-line.nsScore, fieldScores, 'ew');
-        }
-        resultLines.push(line);
+      // Three categories of "Better" for teams:
+      // 1. Declaring side's better contracts (higher-scoring contracts they could have bid)
+      // 2. Better defense (DD says actual contract doesn't make at claimed tricks)
+      // 3. Defending side's saves (outbid the contract, penalty less than conceded score)
+
+      const declDirs = declarerIsNs ? ['n', 's'] : ['e', 'w'];
+      const defDirs = declarerIsNs ? ['e', 'w'] : ['n', 's'];
+      const declVul = isVul(declarerIsNs ? 'ns' : 'ew', b.vulnerability);
+      const defVul = isVul(declarerIsNs ? 'ew' : 'ns', b.vulnerability);
+      const nsScore = declarerIsNs ? (r.score || 0) : -(r.score || 0);
+      const declActual = r.score || 0; // from declarer's perspective (positive = declarer scores)
+      const defActual = -(r.score || 0); // from defender's perspective
+
+      // Other room's contribution to IMP swing (from our team's perspective)
+      let otherRoomOurScore = null;
+      if (row.otherRoom && ourParticipantId) {
+        const swapped = r.ns_participant_id === row.otherRoom.ew_participant_id;
+        const otherNs = swapped ? -(row.otherRoom.score || 0) : (row.otherRoom.score || 0);
+        otherRoomOurScore = ourSideIsNs ? otherNs : -otherNs;
       }
-      if (resultLines.length > 0) optLines = resultLines;
+
+      const resultLines = [];
+      const ourActualScore = ourSideIsNs ? nsScore : -nsScore;
+
+      // 1. Declaring side's better contracts
+      for (const denom of ['C', 'D', 'H', 'S', 'NT']) {
+        const denomKey = denom === 'NT' ? 'nt' : denom.toLowerCase();
+        const isMinor = denom === 'C' || denom === 'D';
+        let maxT = 0, bestDir = '';
+        for (const dir of declDirs) {
+          const t = b[`dd_${dir}_${denomKey}`];
+          if (t != null && t > maxT) { maxT = t; bestDir = dir.toUpperCase(); }
+        }
+        if (maxT < 7) continue;
+        const bestLevel = maxT - 6;
+        const score = computeScore(bestLevel, denom, maxT, declVul, isMinor);
+        if (score > declActual) {
+          const ourScore = weAreDeclaring ? score : -score;
+          const line = {
+            type: 'alternate',
+            contract: { level: bestLevel, denom, x: '', dir: bestDir, ot: 0 },
+            ourScore,
+          };
+          if (otherRoomOurScore != null) line.imps = scoreToImps(ourScore + otherRoomOurScore);
+          resultLines.push(line);
+        }
+      }
+
+      // 2. Better defense — DD says actual contract makes fewer tricks
+      if (r.contract_level && r.declarer && !r.passed_out) {
+        const dDir = r.declarer.toLowerCase();
+        const dk = r.contract_denom === 'NT' ? 'nt' : r.contract_denom.toLowerCase();
+        const ddTricks = b[`dd_${dDir}_${dk}`];
+        if (ddTricks != null && ddTricks < (r.tricks || 0)) {
+          const needed = r.contract_level + 6;
+          const isMin = r.contract_denom === 'C' || r.contract_denom === 'D';
+          const x = r.contract_x || '';
+          let ddDeclScore;
+          if (ddTricks >= needed) {
+            ddDeclScore = x === 'X' ? computeDoubledMaking(r.contract_level, r.contract_denom, ddTricks, declVul, isMin)
+                                    : computeScore(r.contract_level, r.contract_denom, ddTricks, declVul, isMin);
+          } else {
+            const down = needed - ddTricks;
+            ddDeclScore = x === 'X' ? doubledDownScore(down, declVul) : (declVul ? -100 * down : -50 * down);
+          }
+          if (ddDeclScore < declActual) {
+            const ddOt = ddTricks - needed;
+            const ourScore = weAreDeclaring ? ddDeclScore : -ddDeclScore;
+            const line = {
+              type: 'defense',
+              contract: { level: r.contract_level, denom: r.contract_denom, x, dir: r.declarer, ot: ddOt },
+              ourScore,
+              tricks: ddTricks,
+            };
+            if (otherRoomOurScore != null) line.imps = scoreToImps(ourScore + otherRoomOurScore);
+            resultLines.push(line);
+          }
+        }
+      }
+
+      // 3. Defending side's saves — must outbid the actual contract
+      if (r.contract_level) {
+        const actualLevel = r.contract_level;
+        const actualDenomRank = denomRank(r.contract_denom);
+
+        for (const denom of ['C', 'D', 'H', 'S', 'NT']) {
+          const denomKey = denom === 'NT' ? 'nt' : denom.toLowerCase();
+          const saveDenomRank = denomRank(denom);
+          // Minimum level to outbid the actual contract
+          const minLevel = saveDenomRank > actualDenomRank ? actualLevel : actualLevel + 1;
+          if (minLevel > 7) continue;
+
+          let maxT = 0, bestDir = '';
+          for (const dir of defDirs) {
+            const t = b[`dd_${dir}_${denomKey}`];
+            if (t != null && t > maxT) { maxT = t; bestDir = dir.toUpperCase(); }
+          }
+
+          const needed = minLevel + 6;
+          let saveScore;
+          if (maxT >= needed) {
+            // Save actually makes — compute making score (from defender's perspective)
+            const isMinor = denom === 'C' || denom === 'D';
+            saveScore = computeScore(minLevel, denom, maxT, defVul, isMinor);
+          } else {
+            // Goes down — assume doubled
+            const down = needed - maxT;
+            saveScore = doubledDownScore(down, defVul);
+          }
+
+          // saveScore is from defender's perspective. Compare vs defActual.
+          if (saveScore > defActual) {
+            const down = Math.max(0, needed - maxT);
+            const ot = maxT >= needed ? maxT - needed : -down;
+            // From our team's perspective
+            const ourScore = weAreDeclaring ? -saveScore : saveScore;
+            const line = {
+              type: 'save',
+              contract: { level: minLevel, denom, x: down > 0 ? 'X' : '', dir: bestDir, ot },
+              ourScore,
+            };
+            if (otherRoomOurScore != null) line.imps = scoreToImps(ourScore + otherRoomOurScore);
+            resultLines.push(line);
+          }
+        }
+      }
+
+      if (resultLines.length > 0) {
+        optLines = resultLines.sort((a, b) => b.ourScore - a.ourScore);
+      }
     } else {
       // Pairs: DD optimal for our contract + better alternate contracts
       const dDir = r.declarer.toLowerCase();
@@ -876,6 +958,7 @@ function TravellerPopup({ popup, board, result, otherRoom, boardResults, partici
 
 const SUIT_SYMBOLS_T = { S: '♠', H: '♥', D: '♦', C: '♣' };
 const DENOM_ORDER = { C: 0, D: 1, H: 2, S: 3, NT: 4 };
+function denomRank(d) { return DENOM_ORDER[d] ?? -1; }
 
 function TravellerTable({ boardResults, participantMap, highlightParticipantId, isTeams }) {
   const [sortKey, setSortKey] = useState('ns');
@@ -966,7 +1049,8 @@ function TravellerTable({ boardResults, participantMap, highlightParticipantId, 
 
           return (
             <React.Fragment key={i}>
-              <tr className={`border-b border-gray-50 ${hl ? 'bg-blue-50 font-semibold' : 'hover:bg-gray-50'}`}>
+              <tr className={`border-b border-gray-50 ${hl ? 'bg-blue-50 font-semibold' : 'hover:bg-gray-50'} ${hasBidding ? 'cursor-pointer' : ''}`}
+                onClick={hasBidding ? () => setExpandedIdx(isExpanded ? null : i) : undefined}>
                 <td className="py-1 px-1.5 truncate max-w-[90px]" title={nsName}>{shortPairName(nsName)}</td>
                 <td className="py-1 px-1.5 truncate max-w-[90px]" title={ewName}>{shortPairName(ewName)}</td>
                 <td className="py-1 px-1.5">
@@ -1005,7 +1089,7 @@ function TravellerTable({ boardResults, participantMap, highlightParticipantId, 
               {isExpanded && (
                 <tr>
                   <td colSpan={colCount} className="px-3 py-2 bg-gray-50 border-b border-gray-200">
-                    <InlineBidding lin={r.lin} />
+                    <BiddingTable lin={r.lin} />
                   </td>
                 </tr>
               )}

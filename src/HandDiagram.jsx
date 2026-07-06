@@ -96,22 +96,21 @@ export default function HandDiagram({ board, result, otherRoom, participantMap, 
       {optimalLines.map((line, i) => {
         const c = line.contract;
         const otStr = c.ot > 0 ? `+${c.ot}` : c.ot < 0 ? `${c.ot}` : '=';
-        const ourScore = line.ourScore != null ? line.ourScore : (ourParticipantId && result?.ew_participant_id === ourParticipantId ? -line.nsScore : line.nsScore);
-        const scoreStr = ourScore > 0 ? `+${ourScore}` : `${ourScore}`;
+        const score = line.ourScore != null ? line.ourScore : (ourParticipantId && result?.ew_participant_id === ourParticipantId ? -line.nsScore : line.nsScore);
+        const scoreStr = score > 0 ? `+${score}` : `${score}`;
         const mp = ourParticipantId && result?.ew_participant_id === ourParticipantId ? line.ewMp : line.nsMp;
-        const sideImps = line.imps != null ? (line.label === 'NS' ? line.imps : -line.imps) : null;
-        const isDD = line.type === 'optimal';
-        const labelColor = isDD ? '#92400e' : '#1e40af';
-        const labelText = isDD ? 'DD optimal:' : 'Better:';
+        const imps = line.imps != null ? line.imps : null;
         return (
           <div key={i} style={{ marginTop: i > 0 ? 2 : 0 }}>
-            <span style={{ color: labelColor, fontWeight: 700, fontSize: '0.68rem' }}>{labelText} </span>
+            <span style={{ color: line.type === 'defense' ? '#92400e' : '#1e40af', fontWeight: 700, fontSize: '0.68rem' }}>
+              {line.type === 'defense' ? 'Better defense: ' : line.type === 'save' ? 'Save: ' : 'Better: '}
+            </span>
             <span style={{ fontWeight: 600 }}>
               {c.level}<span style={{ color: SUIT_CLR[c.denom] || '#333' }}>{SUIT_SYM[c.denom] || c.denom}</span>{c.x}
             </span>
             <span style={{ color: '#6b7280' }}> by {c.dir} {otStr} ({scoreStr})</span>
-            {sideImps != null && <span style={{ fontWeight: 600, color: sideImps > 0 ? '#15803d' : '#6b7280', marginLeft: 4 }}>{sideImps > 0 ? '+' : ''}{sideImps} IMPs</span>}
-            {sideImps == null && mp != null && <span style={{ fontWeight: 600, color: mp >= 60 ? '#15803d' : mp <= 40 ? '#dc2626' : '#6b7280', marginLeft: 4 }}>{Math.round(mp)}%</span>}
+            {imps != null && <span style={{ fontWeight: 600, color: imps > 0 ? '#15803d' : imps < 0 ? '#dc2626' : '#6b7280', marginLeft: 4 }}>{imps > 0 ? '+' : ''}{imps} IMPs</span>}
+            {imps == null && mp != null && <span style={{ fontWeight: 600, color: mp >= 60 ? '#15803d' : mp <= 40 ? '#dc2626' : '#6b7280', marginLeft: 4 }}>{Math.round(mp)}%</span>}
           </div>
         );
       })}
@@ -151,7 +150,7 @@ export default function HandDiagram({ board, result, otherRoom, participantMap, 
         {onOtherRoom && <span style={{ fontSize: '1.1rem', fontWeight: 700, color: '#2563eb' }}>→</span>}
       </div>
       <div style={{ marginTop: 2 }}>
-        {fmtContract(otherRoom)} by {otherRoom.declarer}
+        {fmtContractColored(otherRoom)} by {otherRoom.declarer}
         {' '}{otherRoom.overtricks != null ? (otherRoom.overtricks === 0 ? '= ' : otherRoom.overtricks > 0 ? `+${otherRoom.overtricks} ` : `${otherRoom.overtricks} `) : ' '}
         ({otherRoom.score > 0 ? `+${otherRoom.score}` : `${otherRoom.score}`})
       </div>
@@ -193,7 +192,7 @@ export default function HandDiagram({ board, result, otherRoom, participantMap, 
         {isTeams && otherRoom && (
           <div style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '3px 6px', marginTop: 3, fontSize: '0.7rem' }}>
             <span style={{ fontWeight: 700, color: '#1e40af' }}>OTHER ROOM: </span>
-            {fmtContract(otherRoom)} by {otherRoom.declarer}
+            {fmtContractColored(otherRoom)} by {otherRoom.declarer}
             {' '}{otherRoom.overtricks != null ? (otherRoom.overtricks === 0 ? '= ' : otherRoom.overtricks > 0 ? `+${otherRoom.overtricks} ` : `${otherRoom.overtricks} `) : ' '}
             ({otherRoom.score > 0 ? `+${otherRoom.score}` : `${otherRoom.score}`})
           </div>
@@ -367,7 +366,19 @@ function Compass({ vul, dealer }) {
 
 // ── Bidding table ────────────────────────────────────────────────
 
-function BiddingTable({ lin, dealer, compact }) {
+export function BidTooltip({ text }) {
+  return (
+    <span style={{
+      position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)',
+      background: '#1f2937', color: '#fff', fontSize: '0.65rem', padding: '2px 6px',
+      borderRadius: 4, whiteSpace: 'nowrap', pointerEvents: 'none',
+      opacity: 0, transition: 'opacity 0.15s',
+      zIndex: 20,
+    }} className="bid-tooltip">{text}</span>
+  );
+}
+
+export function BiddingTable({ lin, dealer, compact }) {
   const bids = parseBiddingFromLin(lin);
   if (!bids || bids.length === 0) return null;
 
@@ -390,7 +401,6 @@ function BiddingTable({ lin, dealer, compact }) {
   }
   if (currentRow.some(c => c !== null)) rows.push(currentRow);
 
-  const cellPad = compact ? '1px 2px' : '1px 4px';
   const fontSize = compact ? '0.7rem' : '0.75rem';
   const headSize = compact ? '0.65rem' : '0.7rem';
 
@@ -410,8 +420,14 @@ function BiddingTable({ lin, dealer, compact }) {
           {rows.map((row, i) => (
             <tr key={i}>
               {row.map((cell, j) => (
-                <td key={j} style={{ padding: compact ? '1px 6px' : '1px 10px', textAlign: 'center' }}>
+                <td key={j} style={{
+                  padding: compact ? '1px 6px' : '1px 10px',
+                  textAlign: 'center',
+                  position: 'relative',
+                  ...(cell && cell.alert ? { background: '#dbeafe' } : {}),
+                }}>
                   {cell === null ? '' : formatBidCell(cell, compact)}
+                  {cell && cell.explanation && <BidTooltip text={cell.explanation} />}
                 </td>
               ))}
             </tr>
@@ -424,16 +440,48 @@ function BiddingTable({ lin, dealer, compact }) {
 
 function parseBiddingFromLin(lin) {
   if (!lin) return null;
-  const mbMatch = lin.match(/mb\|([^|]*)\|/);
-  if (!mbMatch || !mbMatch[1]) return null;
+  const tags = lin.split('|');
   const bids = [];
-  const regex = /([1-7][CDHSN]T?|P|X{1,2})/gi;
-  let m;
-  while ((m = regex.exec(mbMatch[1])) !== null) bids.push(m[1].toUpperCase());
+  let hasMb = false;
+
+  for (let i = 0; i < tags.length; i++) {
+    if (tags[i] === 'mb' && i + 1 < tags.length) {
+      hasMb = true;
+      const raw = tags[i + 1];
+      if (!raw) continue;
+      const isAlert = raw.endsWith('!');
+      const bidStr = isAlert ? raw.slice(0, -1) : raw;
+      let explanation = null;
+      if (isAlert && i + 2 < tags.length && tags[i + 2] === 'an' && i + 3 < tags.length) {
+        explanation = tags[i + 3];
+      }
+      const regex = /([1-7][CDHSN]T?|P|X{1,2})/gi;
+      let m;
+      while ((m = regex.exec(bidStr)) !== null) {
+        bids.push({ bid: m[1].toUpperCase(), alert: isAlert, explanation });
+      }
+    }
+  }
+
+  if (!hasMb) return null;
+
+  // Fallback: old concatenated format (single mb| with all bids)
+  if (bids.length === 0) {
+    const mbMatch = lin.match(/mb\|([^|]+)\|/);
+    if (mbMatch) {
+      const regex = /([1-7][CDHSN]T?|P|X{1,2})/gi;
+      let m;
+      while ((m = regex.exec(mbMatch[1])) !== null) {
+        bids.push({ bid: m[1].toUpperCase(), alert: false, explanation: null });
+      }
+    }
+  }
+
   return bids.length > 0 ? bids : null;
 }
 
-function formatBidCell(bid, compact) {
+function formatBidCell(entry, compact) {
+  const bid = typeof entry === 'string' ? entry : entry.bid;
   if (!bid) return '';
   const sz = compact ? '0.75rem' : '0.85rem';
   if (bid === 'P') return <span style={{ color: '#15803d', fontSize: sz }}>Pass</span>;

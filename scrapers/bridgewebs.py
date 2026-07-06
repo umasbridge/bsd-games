@@ -618,40 +618,42 @@ def _parse_session_data(board_pages, stage_id, player_data, participant_map, sco
 # ── Main scrape logic ─────────────────────────────────────────────
 
 def scrape(url, dry_run=False, name=None):
-    """Scrape all sessions of a BridgeWebs tournament and write to Supabase.
+    """Scrape a single BridgeWebs session and write to Supabase.
 
-    Given any URL from a tournament, discovers all sibling sessions on the same
-    date (probing _1, _2, _3...) and scrapes them under one tournament with
-    intelligently named stages.
+    Scrapes only the session pointed to by the URL. Multiple sessions
+    should be retrieved separately, each with their own URL.
 
     Hierarchy: bg_tournaments → bg_events → bg_stages → bg_boards → bg_board_results
     """
     club, event = parse_bridgewebs_url(url)
-    date_str = re.match(r'(\d{8})', event).group(1)
     event_date = _event_date(event)
-    print(f'Club: {club}, Date: {event_date}')
+    print(f'Club: {club}, Event: {event}, Date: {event_date}')
 
-    # ── Discover all sessions for this date ──
-    print('Discovering sessions...')
-    sessions = discover_sessions(club, date_str)
+    source_url = f'https://www.bridgewebs.com/cgi-bin/bwor/bw.cgi?pid=display_rank&event={event}&club={club}'
 
-    if not sessions:
-        print('  No sessions found.')
+    if not dry_run and stage_exists(source_url):
+        print('  Already scraped. Skipping.')
         return
 
-    # ── Determine tournament, event, and stage names ──
-    club_display = sessions[0]['club_name'] or club.upper()
+    # ── Fetch data for this single session ──
+    xml_text = fetch_travs_xml(club, event)
+    pages = parse_pages(xml_text)
+    board_pages = [p for p in pages if p.get('view') == '3']
+
+    if not board_pages:
+        print('  No board data found.')
+        return
+
+    result_title, club_name = fetch_event_title(club, event)
+    scoring = detect_scoring(club, event)
+    club_display = club_name or club.upper()
     tournament_name = name or (f'{club_display} - {event_date}' if event_date else club_display)
-    event_name, stage_names = _derive_names(sessions)
+    stage_name = _strip_date_prefix(result_title) or 'main'
 
-    print(f'\nTournament: {tournament_name}')
-    print(f'Event: {event_name}')
-    for sess, sname in zip(sessions, stage_names):
-        print(f'  Stage: {sname} ({len(sess["board_pages"])} boards)')
+    print(f'Tournament: {tournament_name}')
+    print(f'Stage: {stage_name} ({len(board_pages)} boards, {scoring})')
 
-    # ── Create tournament and event (once for all sessions) ──
-    source_url = f'https://www.bridgewebs.com/cgi-bin/bwor/bw.cgi?pid=display_rank&event={sessions[0]["event_key"]}&club={club}'
-
+    # ── Create tournament, event, stage ──
     tournament_data = {
         'name': tournament_name,
         'location': None,
@@ -660,133 +662,111 @@ def scrape(url, dry_run=False, name=None):
         'source_meta': {'club': club},
     }
 
-    event_data_template = {
-        'name': event_name,
+    event_data = {
+        'name': tournament_name,
         'type': 'pairs',
-        'scoring': sessions[0].get('scoring', 'mp'),
+        'scoring': scoring,
         'event_order': 1,
         'source_url': source_url,
-        'source_meta': {'club': club, 'event_keys': [s['event_key'] for s in sessions]},
+        'source_meta': {'club': club, 'event_key': event},
     }
 
     if dry_run:
         print(f'\n[DRY RUN] Tournament: {tournament_name}')
         tournament_id = 'dry-run-t'
         event_id = 'dry-run-e'
+        stage_id = 'dry-run-s'
     else:
         tournament_id = upsert_tournament(tournament_data)
-        print(f'\n  Tournament ID: {tournament_id}')
+        print(f'  Tournament ID: {tournament_id}')
 
-        event_data_template['tournament_id'] = tournament_id
-        event_id = upsert_event(event_data_template)
+        event_data['tournament_id'] = tournament_id
+        event_id = upsert_event(event_data)
         print(f'  Event ID: {event_id}')
-
-    # ── Scrape each session as a stage ──
-    total_boards = 0
-    total_results = 0
-    all_errors = []
-
-    for sess, stage_name in zip(sessions, stage_names):
-        ek = sess['event_key']
-        stage_source_url = f'https://www.bridgewebs.com/cgi-bin/bwor/bw.cgi?pid=display_rank&event={ek}&club={club}'
-
-        print(f'\n── {stage_name} ({ek}) ──')
-
-        if not dry_run and stage_exists(stage_source_url):
-            print('  Already scraped. Skipping.')
-            continue
-
-        player_data = parse_players(sess['pages'])
-        print(f'  {len(player_data)} pairs')
 
         stage_data = {
             'name': stage_name,
-            'stage_order': sess['session_num'],
-            'source_url': stage_source_url,
-            'source_meta': {'club': club, 'event': ek},
+            'event_id': event_id,
+            'stage_order': 1,
+            'source_url': source_url,
+            'source_meta': {'club': club, 'event': event},
         }
+        stage_id = upsert_stage(stage_data)
+        print(f'  Stage ID: {stage_id}')
 
-        if dry_run:
-            stage_id = f'dry-run-s{sess["session_num"]}'
-            participant_map = {pkey: f'id-{pkey}' for pkey in player_data}
+    # ── Parse players, boards, results ──
+    player_data = parse_players(pages)
+    print(f'  {len(player_data)} pairs')
+
+    if dry_run:
+        participant_map = {pkey: f'id-{pkey}' for pkey in player_data}
+    else:
+        participant_rows = []
+        key_to_number = {}
+        for pkey, pdata in sorted(player_data.items()):
+            participant_rows.append({
+                'event_id': event_id,
+                'number': pdata['number'],
+                'name': pdata['name'],
+                'roster': [
+                    {'name': pdata['name1'], 'player_id': ''},
+                    {'name': pdata['name2'], 'player_id': ''},
+                ],
+            })
+            key_to_number[pkey] = pdata['number']
+
+        existing = find_participants(event_id)
+        new_rows = [r for r in participant_rows if r['number'] not in existing]
+        if new_rows:
+            print(f'  Inserting {len(new_rows)} participants ({len(existing)} existing)...')
+            num_to_id = {**existing, **insert_participants(new_rows)}
         else:
-            stage_data['event_id'] = event_id
-            stage_id = upsert_stage(stage_data)
-            print(f'  Stage ID: {stage_id}')
+            print(f'  {len(existing)} participants already exist.')
+            num_to_id = existing
+        participant_map = {pkey: num_to_id.get(num) for pkey, num in key_to_number.items()}
 
-            # Insert participants
-            participant_rows = []
-            key_to_number = {}
-            for pkey, pdata in sorted(player_data.items()):
-                participant_rows.append({
-                    'event_id': event_id,
-                    'number': pdata['number'],
-                    'name': pdata['name'],
-                    'roster': [
-                        {'name': pdata['name1'], 'player_id': ''},
-                        {'name': pdata['name2'], 'player_id': ''},
-                    ],
-                })
-                key_to_number[pkey] = pdata['number']
+    board_rows, result_rows, errors = _parse_session_data(
+        board_pages, stage_id, player_data, participant_map, scoring=scoring)
 
-            existing = find_participants(event_id)
-            new_rows = [r for r in participant_rows if r['number'] not in existing]
-            if new_rows:
-                print(f'  Inserting {len(new_rows)} participants ({len(existing)} existing)...')
-                num_to_id = {**existing, **insert_participants(new_rows)}
-            else:
-                print(f'  {len(existing)} participants already exist.')
-                num_to_id = existing
-            participant_map = {pkey: num_to_id.get(num) for pkey, num in key_to_number.items()}
+    if dry_run:
+        print(f'  [DRY RUN] {len(board_rows)} boards, {len(result_rows)} results')
+        if errors:
+            print(f'  Errors ({len(errors)}):')
+            for e in errors[:10]:
+                print(f'    {e}')
+        return
 
-        # Parse boards and results
-        board_rows, result_rows, errors = _parse_session_data(
-            sess['board_pages'], stage_id, player_data, participant_map,
-            scoring=sessions[0].get('scoring', 'mp'))
+    print(f'  Inserting {len(board_rows)} boards...')
+    board_id_map = insert_boards(board_rows)
 
-        if dry_run:
-            print(f'  [DRY RUN] {len(board_rows)} boards, {len(result_rows)} results')
-            total_boards += len(board_rows)
-            total_results += len(result_rows)
-            all_errors.extend(errors)
-            continue
+    needs_dd = [b for b in board_rows if b.get('dd_n_nt') is None]
+    if needs_dd:
+        print(f'  Computing DD for {len(needs_dd)} boards...')
+        dd_count = 0
+        for b in needs_dd:
+            dd_data = compute_dd(b)
+            if dd_data:
+                board_id = board_id_map.get((b.get('round'), b['board_number']))
+                if board_id:
+                    update_board_dd(board_id, dd_data)
+                    dd_count += 1
+        print(f'  Updated {dd_count} boards with DD data')
 
-        print(f'  Inserting {len(board_rows)} boards...')
-        board_id_map = insert_boards(board_rows)
+    for result in result_rows:
+        bn = result.pop('_board_number')
+        result['board_id'] = board_id_map.get((None, bn))
 
-        needs_dd = [b for b in board_rows if b.get('dd_n_nt') is None]
-        if needs_dd:
-            print(f'  Computing DD for {len(needs_dd)} boards...')
-            dd_count = 0
-            for b in needs_dd:
-                dd_data = compute_dd(b)
-                if dd_data:
-                    board_id = board_id_map.get((b.get('round'), b['board_number']))
-                    if board_id:
-                        update_board_dd(board_id, dd_data)
-                        dd_count += 1
-            print(f'  Updated {dd_count} boards with DD data')
+    result_rows = [r for r in result_rows if r.get('board_id')]
 
-        for result in result_rows:
-            bn = result.pop('_board_number')
-            result['board_id'] = board_id_map.get((None, bn))
+    print(f'  Inserting {len(result_rows)} board results...')
+    insert_board_results(result_rows)
 
-        result_rows = [r for r in result_rows if r.get('board_id')]
-
-        print(f'  Inserting {len(result_rows)} board results...')
-        insert_board_results(result_rows)
-
-        total_boards += len(board_rows)
-        total_results += len(result_rows)
-        all_errors.extend(errors)
-
-    print(f'\nDone! Tournament: {tournament_name}')
-    print(f'  Sessions: {len(sessions)}')
-    print(f'  Total boards: {total_boards}')
-    print(f'  Total results: {total_results}')
-    if all_errors:
-        print(f'  Errors ({len(all_errors)}):')
-        for e in all_errors[:10]:
+    print(f'\nDone! {tournament_name}')
+    print(f'  Boards: {len(board_rows)}')
+    print(f'  Results: {len(result_rows)}')
+    if errors:
+        print(f'  Errors ({len(errors)}):')
+        for e in errors[:10]:
             print(f'    {e}')
 
 

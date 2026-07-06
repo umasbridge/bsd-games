@@ -1,13 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase as defaultSupabase } from './supabase.js';
 import { buildTeamRows, buildPairRows } from './AnalysisView.jsx';
+import { downloadLin } from './linExport.js';
 
-export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAdmin, onNew, onRetrieve, onOpen, onCreateNew, onLogout, onBack, Header, displayRowsCache, onDownloadLin }) {
+export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAdmin, onNew, onRetrieve, onOpen, onCreateNew, onLogout, onBack, Header, displayRowsCache }) {
   const sb = sbProp || defaultSupabase;
   const [analyses, setAnalyses] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [downloading, setDownloading] = useState(null);
   const [sharingAnalysis, setSharingAnalysis] = useState(null);
+  const [downloading, setDownloading] = useState(null);
 
   const fetchAnalyses = async () => {
     const { data: { session } } = await sb.auth.getSession();
@@ -33,17 +34,6 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
     if (!confirm(`Delete "${analysis.name}"? This cannot be undone.`)) return;
     await sb.from('bsd_game_analyses').delete().eq('id', analysis.id);
     setAnalyses(prev => prev.filter(a => a.id !== analysis.id));
-  };
-
-  const handleDownloadLin = async (analysis) => {
-    if (!onDownloadLin) return;
-    setDownloading(analysis.id);
-    try {
-      await onDownloadLin(analysis);
-    } catch (e) {
-      console.error('LIN download failed:', e);
-    }
-    setDownloading(null);
   };
 
   const isOwner = (a) => a.user_id === userId;
@@ -112,16 +102,18 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
                         >
                           Share
                         </button>
-                        {isAdmin && (
-                          <button
-                            onClick={() => handleDownloadLin(a)}
-                            disabled={downloading === a.id}
-                            className="px-3 py-1 border border-gray-200 rounded text-sm text-blue-600 hover:bg-blue-50 disabled:text-gray-400"
-                            title="Download LIN"
-                          >
-                            {downloading === a.id ? '...' : 'LIN'}
-                          </button>
-                        )}
+                        <button
+                          onClick={async () => {
+                            setDownloading(a.id);
+                            try { await downloadLin(sb, a); }
+                            catch (e) { console.error('LIN download failed:', e); }
+                            setDownloading(null);
+                          }}
+                          disabled={downloading === a.id}
+                          className="px-3 py-1 border border-gray-200 rounded text-sm text-blue-600 hover:bg-blue-50 disabled:text-gray-400"
+                        >
+                          {downloading === a.id ? '...' : 'LIN'}
+                        </button>
                         <button
                           onClick={() => handleDelete(a)}
                           className="px-3 py-1 border border-gray-200 rounded text-sm text-red-600 hover:bg-red-50"

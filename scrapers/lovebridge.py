@@ -570,20 +570,30 @@ def _make_result_row(bn, vul, dealer, hands, session_id, stage_id,
         players['player_w_name'] = player_name_map.get(ew_ids[1])
         players['player_w_id'] = str(ew_ids[1])
 
-    if res_data.get('replay') and reg_id_for_watch:
-        try:
-            watch = api(f'/api/archive/watch/{session_id}/{reg_id_for_watch}/{bn}')
-            bidding = parse_bidding_from_watch(watch)
-            play = parse_play_from_watch(watch)
-            claim_tricks = parse_claim_from_watch(watch)
-            wp = parse_players_from_watch(watch)
-            for k, v in wp.items():
-                if v:
-                    players[k] = v
-        except Exception:
-            bidding, play, claim_tricks = None, None, None
-    else:
-        bidding, play, claim_tricks = None, None, None
+    bidding, play, claim_tricks = None, None, None
+    if res_data.get('replay'):
+        regs_to_try = [r for r in reg_id_for_watch if r] if isinstance(reg_id_for_watch, (list, tuple)) else ([reg_id_for_watch] if reg_id_for_watch else [])
+        best_bidding, best_play, best_claim, best_wp = None, None, None, {}
+        for try_reg in regs_to_try:
+            try:
+                watch = api(f'/api/archive/watch/{session_id}/{try_reg}/{bn}')
+                watch_room = parse_room_from_watch(watch)
+                if watch_room and watch_room != room:
+                    continue
+                wb = parse_bidding_from_watch(watch)
+                wp_data = parse_play_from_watch(watch)
+                wc = parse_claim_from_watch(watch)
+                wp = parse_players_from_watch(watch)
+                alert_count = sum(1 for b in (wb or []) if b.get('alert'))
+                best_alert_count = sum(1 for b in (best_bidding or []) if b.get('alert'))
+                if wb and (not best_bidding or alert_count > best_alert_count):
+                    best_bidding, best_play, best_claim, best_wp = wb, wp_data, wc, wp
+            except Exception:
+                pass
+        bidding, play, claim_tricks = best_bidding, best_play, best_claim
+        for k, v in best_wp.items():
+            if v:
+                players[k] = v
 
     lin = generate_lin(
         dealer=dealer, vulnerability=vul, hands=hands,
@@ -619,7 +629,7 @@ def _make_result_row(bn, vul, dealer, hands, session_id, stage_id,
 
 def _process_team_freq(freq, bn, vul, dealer, hands, session_id,
                        reg_id_map, participant_map, player_name_map,
-                       stage_id, result_rows):
+                       stage_id, result_rows, round_offset=None):
     home_reg = freq.get('registrations', {}).get('HOME')
     visit_reg = freq.get('registrations', {}).get('VISITING')
     home_num = reg_id_map.get(home_reg)
@@ -629,7 +639,7 @@ def _process_team_freq(freq, bn, vul, dealer, hands, session_id,
 
     ids = sorted([str(home_reg or 0), str(visit_reg or 0)])
     match_id = f'm{ids[0]}v{ids[1]}'
-    round_num = freq.get('round')
+    round_num = round_offset if round_offset is not None else freq.get('round')
     table_num = freq.get('calculatedTableId')
 
     for room_key, room_label in [('openResult', 'open'), ('closedResult', 'closed')]:
@@ -639,10 +649,9 @@ def _process_team_freq(freq, bn, vul, dealer, hands, session_id,
 
         if room_label == 'open':
             ns_part, ew_part = home_part, visit_part
-            watch_reg = home_reg
         else:
             ns_part, ew_part = visit_part, home_part
-            watch_reg = visit_reg
+        watch_reg = [home_reg, visit_reg]
 
         pids = {
             'ns': freq.get(f'{room_label}Ns', []),
@@ -724,7 +733,7 @@ def _scrape_session_boards(session_id, stage_id, is_teams, round_offset,
                 if is_teams:
                     _process_team_freq(freq, bn, vul, dealer, hands, session_id,
                                        reg_id_map, participant_map, player_name_map,
-                                       stage_id, result_rows)
+                                       stage_id, result_rows, round_offset)
                 else:
                     _process_pair_freq(freq, bn, vul, dealer, hands, session_id,
                                        reg_id_map, participant_map, player_name_map,
@@ -808,14 +817,10 @@ def _scrape_stage(session, session_ids, tournament_id, event_id, dry_run=False):
     # Insert boards
     board_id_map = insert_boards(all_board_rows)
 
-    # Build board_number → board_id lookup (boards have round from round_offset)
-    board_num_to_id = {}
-    for (rnd, bn), bid in board_id_map.items():
-        board_num_to_id.setdefault(bn, bid)
-
     for result in all_result_rows:
         bn = result.pop('_board_number')
-        result['board_id'] = board_num_to_id.get(bn)
+        rnd = result.get('round')
+        result['board_id'] = board_id_map.get((rnd, bn)) or board_id_map.get((None, bn))
 
     all_result_rows = [r for r in all_result_rows if r.get('board_id')]
 
@@ -894,6 +899,8 @@ def scrape(url_or_id, dry_run=False, name=None):
 
     # 4. Create tournament
     tournament_data = build_tournament_data(session)
+    if name:
+        tournament_data['name'] = name
     if dry_run:
         print(f'\n[DRY RUN] Tournament: {tournament_data["name"]}')
         tournament_id = 'dry-run-t'
@@ -939,12 +946,13 @@ def main():
                     'Any session URL scrapes the ENTIRE tournament (all events and stages).'
     )
     parser.add_argument('url', help='LoveBridge URL or miniSessionId (any session from the tournament)')
+    parser.add_argument('--name', help='Override tournament name')
     parser.add_argument('--dry-run', action='store_true',
                         help='Validate and parse without writing to database')
     args = parser.parse_args()
 
     try:
-        scrape(args.url, dry_run=args.dry_run)
+        scrape(args.url, dry_run=args.dry_run, name=args.name)
     except ValueError as e:
         print(f'ERROR: {e}', file=sys.stderr)
         sys.exit(1)
