@@ -1,9 +1,15 @@
 import json
 import os
 import sys
+import time
 from http.server import BaseHTTPRequestHandler
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scrapers'))
+
+# Vercel runs in UTC; session labels/dates use local time ("TZ" is a
+# reserved env name on Vercel, so configure via BBO_TZ)
+os.environ['TZ'] = os.environ.get('BBO_TZ', 'Asia/Kolkata')
+time.tzset()
 
 
 class handler(BaseHTTPRequestHandler):
