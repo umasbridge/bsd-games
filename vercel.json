@@ -2,6 +2,10 @@
   "functions": {
     "api/scrape.py": {
       "maxDuration": 300
+    },
+    "api/bbo.py": {
+      "maxDuration": 300,
+      "includeFiles": "scrapers/**"
     }
   }
 }

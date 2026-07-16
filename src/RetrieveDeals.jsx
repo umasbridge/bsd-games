@@ -11,12 +11,25 @@ function Header({ onBack, title }) {
   );
 }
 
+const KIND_BADGES = {
+  tourney: { label: 'Tourney', cls: 'bg-blue-100 text-blue-800' },
+  mbc: { label: 'Casual', cls: 'bg-gray-100 text-gray-700' },
+  team: { label: 'Team', cls: 'bg-purple-100 text-purple-800' },
+};
+
 export default function RetrieveDeals({ onBack, onRetrieved }) {
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(false);
+
+  const [showBbo, setShowBbo] = useState(false);
+  const [bboUser, setBboUser] = useState('');
+  const [bboStart, setBboStart] = useState('');
+  const [bboEnd, setBboEnd] = useState('');
+  const [bboSessions, setBboSessions] = useState(null);
+  const [bboSelected, setBboSelected] = useState(new Set());
 
   const handleRetrieve = async () => {
     setError('');
@@ -49,6 +62,78 @@ export default function RetrieveDeals({ onBack, onRetrieved }) {
     }
   };
 
+  const bboPost = async (payload) => {
+    const resp = await fetch('/api/bbo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const result = await resp.json();
+    if (!resp.ok || result.error) {
+      throw new Error(result.error || 'Request failed');
+    }
+    return result;
+  };
+
+  const handleBboFind = async () => {
+    setError('');
+    if (!bboUser.trim() || !bboStart) return;
+
+    setStatus('Fetching hands from BBO...');
+    setLoading(true);
+    try {
+      const result = await bboPost({
+        action: 'sessions',
+        username: bboUser.trim(),
+        start_date: bboStart,
+        end_date: bboEnd || bboStart,
+      });
+      setBboSessions(result.sessions);
+      setBboSelected(new Set());
+      setLoading(false);
+      setStatus('');
+      if (!result.sessions.length) {
+        setError('No hands found for that user and date range');
+      }
+    } catch (e) {
+      setError(e.message);
+      setLoading(false);
+    }
+  };
+
+  const handleBboImport = async () => {
+    setError('');
+    const keys = [...bboSelected];
+    if (!keys.length) return;
+
+    setStatus(`Importing ${keys.length} session${keys.length > 1 ? 's' : ''} (fetching travellers)...`);
+    setLoading(true);
+    try {
+      await bboPost({
+        action: 'import',
+        username: bboUser.trim(),
+        start_date: bboStart,
+        end_date: bboEnd || bboStart,
+        keys,
+      });
+      setLoading(false);
+      setStatus('');
+      onRetrieved();
+    } catch (e) {
+      setError(e.message);
+      setLoading(false);
+    }
+  };
+
+  const toggleBboSession = (key) => {
+    setBboSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-100">
@@ -66,7 +151,7 @@ export default function RetrieveDeals({ onBack, onRetrieved }) {
   return (
     <div className="min-h-screen bg-gray-100">
       <Header onBack={onBack} title="Retrieve Played Deals" />
-      <div className="px-6 py-4 max-w-2xl">
+      <div className="px-6 py-4 max-w-2xl space-y-4">
         <form
           className="bg-white border border-gray-200 rounded-lg p-4 space-y-4"
           noValidate
@@ -101,11 +186,110 @@ export default function RetrieveDeals({ onBack, onRetrieved }) {
               >
                 Retrieve
               </button>
+              <button
+                type="button"
+                onClick={() => setShowBbo(!showBbo)}
+                className={`px-4 py-2 rounded text-sm font-medium border ${
+                  showBbo
+                    ? 'bg-blue-50 border-blue-300 text-blue-700'
+                    : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                BBO Hands
+              </button>
             </div>
           </div>
 
-          {error && <p className="text-sm text-red-600">{error}</p>}
+          {error && !showBbo && <p className="text-sm text-red-600">{error}</p>}
         </form>
+
+        {showBbo && (
+          <div className="bg-white border border-gray-200 rounded-lg p-4 space-y-4">
+            <h2 className="text-sm font-bold text-gray-800">BBO Hands</h2>
+
+            <div className="flex gap-2 items-end flex-wrap">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">BBO username</label>
+                <input
+                  type="text"
+                  value={bboUser}
+                  onChange={(e) => setBboUser(e.target.value)}
+                  placeholder="whose hands?"
+                  className="w-36 px-3 py-2 border border-gray-300 rounded text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">From</label>
+                <input
+                  type="date"
+                  value={bboStart}
+                  onChange={(e) => setBboStart(e.target.value)}
+                  className="px-3 py-2 border border-gray-300 rounded text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">To</label>
+                <input
+                  type="date"
+                  value={bboEnd}
+                  onChange={(e) => setBboEnd(e.target.value)}
+                  className="px-3 py-2 border border-gray-300 rounded text-sm"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={handleBboFind}
+                disabled={!bboUser.trim() || !bboStart}
+                className="px-4 py-2 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+              >
+                Find Sessions
+              </button>
+            </div>
+
+            {bboSessions && bboSessions.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-sm text-gray-600">
+                  {bboSessions.length} session{bboSessions.length > 1 ? 's' : ''} found — pick what to import:
+                </p>
+                <div className="border border-gray-200 rounded divide-y divide-gray-100">
+                  {bboSessions.map((s) => {
+                    const badge = KIND_BADGES[s.kind] || KIND_BADGES.mbc;
+                    return (
+                      <label
+                        key={s.key}
+                        className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-gray-50"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={bboSelected.has(s.key)}
+                          onChange={() => toggleBboSession(s.key)}
+                        />
+                        <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${badge.cls}`}>
+                          {badge.label}
+                        </span>
+                        <span className="text-sm flex-1">
+                          {s.label}
+                          {s.opponents && <span className="text-gray-500"> vs {s.opponents}</span>}
+                        </span>
+                        <span className="text-xs text-gray-500">{s.boards} boards</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleBboImport}
+                  disabled={!bboSelected.size}
+                  className="px-4 py-2 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+                >
+                  Import {bboSelected.size || ''} Selected
+                </button>
+              </div>
+            )}
+
+            {error && <p className="text-sm text-red-600">{error}</p>}
+          </div>
+        )}
       </div>
     </div>
   );
