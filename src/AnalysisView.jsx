@@ -620,6 +620,17 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
       }
     } else {
       // Pairs: DD optimal for our contract + better alternate contracts
+      // IMP pairs compare via cross-IMPs against the other tables; MP pairs via MP%
+      const impPairs = boardResults.some(x => x.imps_ns != null);
+      const otherNsScores = impPairs
+        ? boardResults.filter(x => x.id !== r.id).map(x => x.score || 0)
+        : [];
+      const crossImpsNs = (nsScore) => {
+        if (!otherNsScores.length) return null;
+        const total = otherNsScores.reduce((sum, s) => sum + scoreToImps(nsScore - s), 0);
+        return Math.round((total / otherNsScores.length) * 10) / 10;
+      };
+
       const dDir = r.declarer.toLowerCase();
       const dk = r.contract_denom === 'NT' ? 'nt' : r.contract_denom.toLowerCase();
       const ddTricks = b[`dd_${dDir}_${dk}`];
@@ -656,7 +667,10 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
           ourScore: ddOptimalForUs,
           tricks: ddTricks,
         };
-        if (fieldScores) {
+        if (impPairs) {
+          const impNs = crossImpsNs(ddOptNsScore);
+          if (impNs != null) optLine.imps = ourSideIsNs ? impNs : -impNs;
+        } else if (fieldScores) {
           optLine.nsMp = calcMpPct(ddOptNsScore, fieldScores, 'ns');
           optLine.ewMp = calcMpPct(-ddOptNsScore, fieldScores, 'ew');
         }
@@ -689,7 +703,10 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
               nsScore,
               ourScore: bestScore,
             };
-            if (fieldScores) {
+            if (impPairs) {
+              const impNs = crossImpsNs(nsScore);
+              if (impNs != null) altLine.imps = ourSideIsNs ? impNs : -impNs;
+            } else if (fieldScores) {
               altLine.nsMp = calcMpPct(nsScore, fieldScores, 'ns');
               altLine.ewMp = calcMpPct(-nsScore, fieldScores, 'ew');
             }
