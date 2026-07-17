@@ -476,7 +476,8 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
   // Compute optimal/alternate contract lines
   let pairsDDBest = null;
   let optLines = null;
-  if (row.board && hasDDData(row.board) && row.result && !row.result.passed_out) {
+  if (row.board && hasDDData(row.board) && row.result && !row.result.passed_out
+      && row.result.declarer && row.result.contract_level) {
     const b = row.board;
     const r = row.result;
     const fieldScores = boardResults.length > 1 ? boardResults.map(x => x.score || 0) : null;
@@ -677,10 +678,25 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
         resultLines.push(optLine);
 
         // Alternate contracts for our side that beat our ACTUAL result
-        // (not just the DD par of the contract we played)
+        // (not just the DD par of the contract we played).
+        // When the opponents declared, our alternative must OUTBID their
+        // contract (a save), assumed doubled when it goes down.
         const ourActualScore = ourSideIsNs ? (r.score || 0) : -(r.score || 0);
         const ourDirs = ourSideIsNs ? ['n', 's'] : ['e', 'w'];
         const ourVul = isVul(ourSide, b.vulnerability);
+
+        const pushAltLine = (type, contract, ourScore) => {
+          const nsScore = ourSideIsNs ? ourScore : -ourScore;
+          const altLine = { type, contract, nsScore, ourScore };
+          if (impPairs) {
+            const impNs = crossImpsNs(nsScore);
+            if (impNs != null) altLine.imps = ourSideIsNs ? impNs : -impNs;
+          } else if (fieldScores) {
+            altLine.nsMp = calcMpPct(nsScore, fieldScores, 'ns');
+            altLine.ewMp = calcMpPct(-nsScore, fieldScores, 'ew');
+          }
+          resultLines.push(altLine);
+        };
 
         for (const denom of ['C', 'D', 'H', 'S', 'NT']) {
           const denomKey = denom === 'NT' ? 'nt' : denom.toLowerCase();
@@ -690,29 +706,36 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
             const t = b[`dd_${dir}_${denomKey}`];
             if (t != null && t > maxT) { maxT = t; bestDir = dir.toUpperCase(); }
           }
-          if (maxT < 7) continue;
+          if (!bestDir) continue;
 
-          // Use highest makeable level (e.g. 8 tricks in NT → 2NT=, not 1NT+1)
-          const bestLevel = maxT - 6;
-          const bestScore = computeScore(bestLevel, denom, maxT, ourVul, isMinor);
-
-          if (bestScore > ourActualScore) {
-            const nsScore = ourSideIsNs ? bestScore : -bestScore;
-            const altLine = {
-              type: 'alternate',
-              label: 'Alt',
-              contract: { level: bestLevel, denom, x: '', dir: bestDir, ot: maxT - (bestLevel + 6) },
-              nsScore,
-              ourScore: bestScore,
-            };
-            if (impPairs) {
-              const impNs = crossImpsNs(nsScore);
-              if (impNs != null) altLine.imps = ourSideIsNs ? impNs : -impNs;
-            } else if (fieldScores) {
-              altLine.nsMp = calcMpPct(nsScore, fieldScores, 'ns');
-              altLine.ewMp = calcMpPct(-nsScore, fieldScores, 'ew');
+          if (weAreDeclaring) {
+            // We won the auction — any makeable contract was available
+            if (maxT < 7) continue;
+            const bestLevel = maxT - 6;
+            const bestScore = computeScore(bestLevel, denom, maxT, ourVul, isMinor);
+            if (bestScore > ourActualScore) {
+              pushAltLine('alternate',
+                { level: bestLevel, denom, x: '', dir: bestDir, ot: maxT - (bestLevel + 6) },
+                bestScore);
             }
-            resultLines.push(altLine);
+          } else {
+            // Opponents declared — we can only outbid them (save)
+            const minLevel = denomRank(denom) > denomRank(r.contract_denom)
+              ? r.contract_level : r.contract_level + 1;
+            if (minLevel > 7) continue;
+            const needed = minLevel + 6;
+            let saveScore;
+            if (maxT >= needed) {
+              saveScore = computeScore(minLevel, denom, maxT, ourVul, isMinor);
+            } else {
+              saveScore = doubledDownScore(needed - maxT, ourVul);
+            }
+            if (saveScore > ourActualScore) {
+              const down = Math.max(0, needed - maxT);
+              pushAltLine('save',
+                { level: minLevel, denom, x: down > 0 ? 'X' : '', dir: bestDir, ot: maxT >= needed ? maxT - needed : -down },
+                saveScore);
+            }
           }
         }
 
