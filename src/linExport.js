@@ -14,6 +14,15 @@ function boardToLin(board, boardNumber) {
   return `qx|o${boardNumber}|md|${dealer}${hands}|rh||ah|Board ${boardNumber}|sv|${vul}|pg||`;
 }
 
+export function openHandviewer(lin) {
+  if (!lin) return;
+  window.open(
+    `https://www.bridgebase.com/tools/handviewer.html?bbo=y&lin=${encodeURIComponent(lin)}`,
+    '_blank',
+    'noopener',
+  );
+}
+
 export async function downloadLin(supabase, analysis) {
   const filters = analysis.filters || {};
   const stageIds = filters.stage_ids || (filters.stage_id ? [filters.stage_id] : []);
