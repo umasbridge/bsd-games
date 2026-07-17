@@ -297,7 +297,7 @@ function ShareAnalysisDialog({ analysis, supabase, userId, onClose }) {
 }
 
 
-export function CreateDealSetPicker({ supabase: sbProp, onBack, onRetrieve, onCreateFromSelection }) {
+export function CreateDealSetPicker({ supabase: sbProp, onBack, onRetrieve, onRetrieveBbo, onCreateFromSelection }) {
   const sb = sbProp || defaultSupabase;
   const [tournaments, setTournaments] = useState([]);
   const [loadingTournaments, setLoadingTournaments] = useState(true);
@@ -441,12 +441,20 @@ export function CreateDealSetPicker({ supabase: sbProp, onBack, onRetrieve, onCr
           </button>
           <h1 className="text-lg font-bold">Create New Deal Set</h1>
         </div>
-        <button
-          onClick={onRetrieve}
-          className="px-3 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700"
-        >
-          Retrieve New Tournament
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onRetrieve}
+            className="px-3 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700"
+          >
+            Retrieve New Tournament
+          </button>
+          <button
+            onClick={onRetrieveBbo}
+            className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
+          >
+            Retrieve BBO Hands
+          </button>
+        </div>
       </div>
 
       <div className="px-6 py-4 max-w-2xl space-y-4">

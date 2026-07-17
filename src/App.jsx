@@ -31,6 +31,7 @@ export default function App() {
       <CreateDealSetPicker
         onBack={() => setView('list')}
         onRetrieve={() => setView('retrieve')}
+        onRetrieveBbo={() => setView('retrieve-bbo')}
         onCreateFromSelection={(stages) => {
           setSelectedStages(stages);
           setView('open-config');
@@ -39,9 +40,10 @@ export default function App() {
     );
   }
 
-  if (view === 'retrieve') {
+  if (view === 'retrieve' || view === 'retrieve-bbo') {
     return (
       <RetrieveDeals
+        mode={view === 'retrieve-bbo' ? 'bbo' : 'url'}
         onBack={() => setView('create')}
         onRetrieved={() => setView('create')}
       />

@@ -16,6 +16,7 @@ export default function GameAnalysis({ supabase, userId, userEmail, isAdmin, onL
         supabase={supabase}
         onBack={() => setView('list')}
         onRetrieve={() => setView('retrieve')}
+        onRetrieveBbo={() => setView('retrieve-bbo')}
         onCreateFromSelection={(stages) => {
           setSelectedStages(stages);
           setView('open-config');
@@ -24,10 +25,11 @@ export default function GameAnalysis({ supabase, userId, userEmail, isAdmin, onL
     );
   }
 
-  if (view === 'retrieve') {
+  if (view === 'retrieve' || view === 'retrieve-bbo') {
     return (
       <RetrieveDeals
         supabase={supabase}
+        mode={view === 'retrieve-bbo' ? 'bbo' : 'url'}
         onBack={() => setView('create')}
         onRetrieved={() => setView('create')}
       />

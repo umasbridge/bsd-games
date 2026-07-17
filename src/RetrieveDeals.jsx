@@ -17,14 +17,16 @@ const KIND_BADGES = {
   team: { label: 'Team', cls: 'bg-purple-100 text-purple-800' },
 };
 
-export default function RetrieveDeals({ onBack, onRetrieved }) {
+export default function RetrieveDeals({ onBack, onRetrieved, mode = 'url' }) {
+  const isBbo = mode === 'bbo';
+  const title = isBbo ? 'Retrieve BBO Hands' : 'Retrieve Played Deals';
+
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const [showBbo, setShowBbo] = useState(false);
   const [bboUser, setBboUser] = useState('');
   const [bboStart, setBboStart] = useState('');
   const [bboEnd, setBboEnd] = useState('');
@@ -137,7 +139,7 @@ export default function RetrieveDeals({ onBack, onRetrieved }) {
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-100">
-        <Header onBack={() => {}} title="Retrieve Played Deals" />
+        <Header onBack={() => {}} title={title} />
         <div className="px-6 py-4 max-w-2xl">
           <div className="bg-white border border-gray-200 rounded-lg p-5 text-center space-y-3">
             <div className="inline-block animate-spin w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full"></div>
@@ -148,65 +150,12 @@ export default function RetrieveDeals({ onBack, onRetrieved }) {
     );
   }
 
-  return (
-    <div className="min-h-screen bg-gray-100">
-      <Header onBack={onBack} title="Retrieve Played Deals" />
-      <div className="px-6 py-4 max-w-2xl space-y-4">
-        <form
-          className="bg-white border border-gray-200 rounded-lg p-4 space-y-4"
-          noValidate
-          onSubmit={(e) => { e.preventDefault(); handleRetrieve(); }}
-        >
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Summer Nationals 2026"
-              className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
-              autoFocus
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">URL</label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="Paste tournament results URL..."
-                className="flex-1 px-3 py-2 border border-gray-300 rounded text-sm"
-              />
-              <button
-                type="submit"
-                disabled={!url.trim() || !name.trim()}
-                className="px-4 py-2 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-              >
-                Retrieve
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowBbo(!showBbo)}
-                className={`px-4 py-2 rounded text-sm font-medium border ${
-                  showBbo
-                    ? 'bg-blue-50 border-blue-300 text-blue-700'
-                    : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
-                }`}
-              >
-                BBO Hands
-              </button>
-            </div>
-          </div>
-
-          {error && !showBbo && <p className="text-sm text-red-600">{error}</p>}
-        </form>
-
-        {showBbo && (
+  if (isBbo) {
+    return (
+      <div className="min-h-screen bg-gray-100">
+        <Header onBack={onBack} title={title} />
+        <div className="px-6 py-4 max-w-2xl">
           <div className="bg-white border border-gray-200 rounded-lg p-4 space-y-4">
-            <h2 className="text-sm font-bold text-gray-800">BBO Hands</h2>
-
             <div className="flex gap-2 items-end flex-wrap">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">BBO username</label>
@@ -216,6 +165,7 @@ export default function RetrieveDeals({ onBack, onRetrieved }) {
                   onChange={(e) => setBboUser(e.target.value)}
                   placeholder="whose hands?"
                   className="w-36 px-3 py-2 border border-gray-300 rounded text-sm"
+                  autoFocus
                 />
               </div>
               <div>
@@ -289,7 +239,54 @@ export default function RetrieveDeals({ onBack, onRetrieved }) {
 
             {error && <p className="text-sm text-red-600">{error}</p>}
           </div>
-        )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-100">
+      <Header onBack={onBack} title={title} />
+      <div className="px-6 py-4 max-w-2xl">
+        <form
+          className="bg-white border border-gray-200 rounded-lg p-4 space-y-4"
+          noValidate
+          onSubmit={(e) => { e.preventDefault(); handleRetrieve(); }}
+        >
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Summer Nationals 2026"
+              className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+              autoFocus
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">URL</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="Paste tournament results URL..."
+                className="flex-1 px-3 py-2 border border-gray-300 rounded text-sm"
+              />
+              <button
+                type="submit"
+                disabled={!url.trim() || !name.trim()}
+                className="px-4 py-2 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+              >
+                Retrieve
+              </button>
+            </div>
+          </div>
+
+          {error && <p className="text-sm text-red-600">{error}</p>}
+        </form>
       </div>
     </div>
   );
