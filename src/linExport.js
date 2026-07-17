@@ -16,11 +16,52 @@ function boardToLin(board, boardNumber) {
 
 export function openHandviewer(lin) {
   if (!lin) return;
-  window.open(
-    `https://www.bridgebase.com/tools/handviewer.html?bbo=y&lin=${encodeURIComponent(lin)}`,
-    '_blank',
-    'noopener',
-  );
+  const url = `https://www.bridgebase.com/tools/handviewer.html?bbo=y&lin=${encodeURIComponent(lin)}`;
+
+  // Full-screen in-app overlay (works on phones where a new tab has no way back)
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#fff;display:flex;flex-direction:column;';
+
+  const cleanup = (popHistory) => {
+    overlay.remove();
+    window.removeEventListener('popstate', onPop);
+    document.removeEventListener('keydown', onKey);
+    if (popHistory) history.back();
+  };
+  const onPop = () => cleanup(false);
+  const onKey = (e) => { if (e.key === 'Escape') cleanup(true); };
+
+  const bar = document.createElement('div');
+  bar.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 12px;background:#1f2937;flex-shrink:0;';
+
+  const back = document.createElement('button');
+  back.textContent = '← Back';
+  back.style.cssText = 'background:#fff;border:none;border-radius:4px;padding:5px 12px;font-size:14px;font-weight:600;cursor:pointer;';
+  back.onclick = () => cleanup(true);
+
+  const title = document.createElement('span');
+  title.textContent = 'BBO Handviewer';
+  title.style.cssText = 'color:#fff;font-size:14px;font-weight:600;';
+
+  const ext = document.createElement('a');
+  ext.textContent = 'New tab ↗';
+  ext.href = url;
+  ext.target = '_blank';
+  ext.rel = 'noopener';
+  ext.style.cssText = 'margin-left:auto;color:#93c5fd;font-size:13px;text-decoration:none;';
+
+  const iframe = document.createElement('iframe');
+  iframe.src = url;
+  iframe.style.cssText = 'flex:1;border:none;width:100%;';
+
+  bar.append(back, title, ext);
+  overlay.append(bar, iframe);
+  document.body.appendChild(overlay);
+
+  // Hardware/browser back closes the overlay instead of leaving the app
+  history.pushState({ handviewer: true }, '');
+  window.addEventListener('popstate', onPop);
+  document.addEventListener('keydown', onKey);
 }
 
 export async function downloadLin(supabase, analysis) {
