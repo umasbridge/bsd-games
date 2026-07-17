@@ -486,7 +486,7 @@ def _result_row_from_table(row, *, ns_perspective_is_row_user, username, scoring
     }, warning
 
 
-def import_session(sess, username, source_url, dry_run=False, travellers=True):
+def import_session(sess, username, source_url, dry_run=False, travellers=True, name=None):
     kind = sess['kind']
     event_type = 'teams' if kind == 'team' else 'pairs'
 
@@ -526,6 +526,8 @@ def import_session(sess, username, source_url, dry_run=False, travellers=True):
         if summary and summary.get('name'):
             scoring = 'imp' if re.search(r'\bIMPs?\b', summary['name'], re.I) else 'mp'
             label = f'{summary["name"]} {sess["date"]}'
+    if name and name.strip():
+        label = name.strip()
 
     tournament_data = {
         'name': label,

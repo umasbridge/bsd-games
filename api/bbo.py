@@ -44,6 +44,7 @@ class handler(BaseHTTPRequestHandler):
 
             if action == 'import':
                 keys = data.get('keys') or []
+                names = data.get('names') or {}
                 if not keys:
                     self._json(400, {'error': 'keys is required for import'})
                     return
@@ -54,8 +55,8 @@ class handler(BaseHTTPRequestHandler):
                     if not sess:
                         missing.append(key)
                         continue
-                    import_session(sess, username, url)
-                    imported.append(sess['label'])
+                    import_session(sess, username, url, name=names.get(key))
+                    imported.append(names.get(key) or sess['label'])
                 result = {'success': True, 'imported': imported}
                 if missing:
                     result['missing'] = missing

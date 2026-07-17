@@ -32,6 +32,7 @@ export default function RetrieveDeals({ onBack, onRetrieved, mode = 'url' }) {
   const [bboEnd, setBboEnd] = useState('');
   const [bboSessions, setBboSessions] = useState(null);
   const [bboSelected, setBboSelected] = useState(new Set());
+  const [bboNames, setBboNames] = useState({});
 
   const handleRetrieve = async () => {
     setError('');
@@ -92,6 +93,7 @@ export default function RetrieveDeals({ onBack, onRetrieved, mode = 'url' }) {
       });
       setBboSessions(result.sessions);
       setBboSelected(new Set());
+      setBboNames({});
       setLoading(false);
       setStatus('');
       if (!result.sessions.length) {
@@ -111,12 +113,18 @@ export default function RetrieveDeals({ onBack, onRetrieved, mode = 'url' }) {
     setStatus(`Importing ${keys.length} session${keys.length > 1 ? 's' : ''} (fetching travellers)...`);
     setLoading(true);
     try {
+      const names = {};
+      for (const k of keys) {
+        const n = (bboNames[k] || '').trim();
+        if (n) names[k] = n;
+      }
       await bboPost({
         action: 'import',
         username: bboUser.trim(),
         start_date: bboStart,
         end_date: bboEnd || bboStart,
         keys,
+        names,
       });
       setLoading(false);
       setStatus('');
@@ -204,25 +212,36 @@ export default function RetrieveDeals({ onBack, onRetrieved, mode = 'url' }) {
                 <div className="border border-gray-200 rounded divide-y divide-gray-100">
                   {bboSessions.map((s) => {
                     const badge = KIND_BADGES[s.kind] || KIND_BADGES.mbc;
+                    const selected = bboSelected.has(s.key);
                     return (
-                      <label
-                        key={s.key}
-                        className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-gray-50"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={bboSelected.has(s.key)}
-                          onChange={() => toggleBboSession(s.key)}
-                        />
-                        <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${badge.cls}`}>
-                          {badge.label}
-                        </span>
-                        <span className="text-sm flex-1">
-                          {s.label}
-                          {s.opponents && <span className="text-gray-500"> vs {s.opponents}</span>}
-                        </span>
-                        <span className="text-xs text-gray-500">{s.boards} boards</span>
-                      </label>
+                      <div key={s.key} className="px-3 py-2">
+                        <label className="flex items-center gap-3 cursor-pointer hover:bg-gray-50">
+                          <input
+                            type="checkbox"
+                            checked={selected}
+                            onChange={() => toggleBboSession(s.key)}
+                          />
+                          <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${badge.cls}`}>
+                            {badge.label}
+                          </span>
+                          <span className="text-sm flex-1">
+                            {s.label}
+                            {s.opponents && <span className="text-gray-500"> vs {s.opponents}</span>}
+                          </span>
+                          <span className="text-xs text-gray-500">{s.boards} boards</span>
+                        </label>
+                        {selected && (
+                          <input
+                            type="text"
+                            value={bboNames[s.key] || ''}
+                            onChange={(e) => setBboNames({ ...bboNames, [s.key]: e.target.value })}
+                            placeholder={s.kind === 'tourney'
+                              ? 'Name (leave blank to use the BBO tournament name)'
+                              : `Name (leave blank for "${s.label}")`}
+                            className="mt-2 ml-7 w-11/12 px-3 py-1.5 border border-gray-300 rounded text-sm"
+                          />
+                        )}
+                      </div>
                     );
                   })}
                 </div>
