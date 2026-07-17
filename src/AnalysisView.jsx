@@ -676,7 +676,9 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
         }
         resultLines.push(optLine);
 
-        // Alternate contracts for our side that beat ddOptimalForUs
+        // Alternate contracts for our side that beat our ACTUAL result
+        // (not just the DD par of the contract we played)
+        const ourActualScore = ourSideIsNs ? (r.score || 0) : -(r.score || 0);
         const ourDirs = ourSideIsNs ? ['n', 's'] : ['e', 'w'];
         const ourVul = isVul(ourSide, b.vulnerability);
 
@@ -694,7 +696,7 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
           const bestLevel = maxT - 6;
           const bestScore = computeScore(bestLevel, denom, maxT, ourVul, isMinor);
 
-          if (bestScore > ddOptimalForUs) {
+          if (bestScore > ourActualScore) {
             const nsScore = ourSideIsNs ? bestScore : -bestScore;
             const altLine = {
               type: 'alternate',

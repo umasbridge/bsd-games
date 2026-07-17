@@ -103,8 +103,9 @@ export default function HandDiagram({ board, result, otherRoom, participantMap, 
         const imps = line.imps != null ? line.imps : null;
         return (
           <div key={i} style={{ marginTop: i > 0 ? 2 : 0 }}>
-            <span style={{ color: line.type === 'defense' ? '#92400e' : '#1e40af', fontWeight: 700, fontSize: '0.68rem' }}>
-              {line.type === 'defense' ? 'Better defense: ' : line.type === 'save' ? 'Save: ' : 'Better: '}
+            <span style={{ color: line.type === 'defense' ? '#92400e' : line.type === 'optimal' ? '#6b7280' : '#1e40af', fontWeight: 700, fontSize: '0.68rem' }}>
+              {line.type === 'defense' ? 'Better defense: ' : line.type === 'save' ? 'Save: '
+                : line.type === 'optimal' ? 'DD: ' : 'Better: '}
             </span>
             <span style={{ fontWeight: 600 }}>
               {c.level}<span style={{ color: SUIT_CLR[c.denom] || '#333' }}>{SUIT_SYM[c.denom] || c.denom}</span>{c.x}
