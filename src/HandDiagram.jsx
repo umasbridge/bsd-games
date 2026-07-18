@@ -449,7 +449,17 @@ export function BiddingTable({ lin, dealer, compact }) {
   );
 }
 
-function parseBiddingFromLin(lin) {
+// LIN encodes double as "d" and redouble as "r" — normalize to X / XX
+const CALL_MAP = { P: 'P', PASS: 'P', D: 'X', X: 'X', DBL: 'X', R: 'XX', XX: 'XX', RDBL: 'XX' };
+
+function normalizeCall(s) {
+  const u = (s || '').trim().toUpperCase();
+  if (CALL_MAP[u]) return CALL_MAP[u];
+  const m = u.match(/^([1-7])(NT?|[CDHS])$/);
+  return m ? m[1] + m[2] : null;
+}
+
+export function parseBiddingFromLin(lin) {
   if (!lin) return null;
   const tags = lin.split('|');
   const bids = [];
@@ -466,11 +476,8 @@ function parseBiddingFromLin(lin) {
       if (isAlert && i + 2 < tags.length && tags[i + 2] === 'an' && i + 3 < tags.length) {
         explanation = tags[i + 3];
       }
-      const regex = /([1-7][CDHSN]T?|P|X{1,2})/gi;
-      let m;
-      while ((m = regex.exec(bidStr)) !== null) {
-        bids.push({ bid: m[1].toUpperCase(), alert: isAlert, explanation });
-      }
+      const call = normalizeCall(bidStr);
+      if (call) bids.push({ bid: call, alert: isAlert, explanation });
     }
   }
 
@@ -480,10 +487,11 @@ function parseBiddingFromLin(lin) {
   if (bids.length === 0) {
     const mbMatch = lin.match(/mb\|([^|]+)\|/);
     if (mbMatch) {
-      const regex = /([1-7][CDHSN]T?|P|X{1,2})/gi;
+      const regex = /([1-7][CDHSN]T?|[PDR]|X{1,2})/gi;
       let m;
       while ((m = regex.exec(mbMatch[1])) !== null) {
-        bids.push({ bid: m[1].toUpperCase(), alert: false, explanation: null });
+        const t = m[1].toUpperCase();
+        bids.push({ bid: CALL_MAP[t] || t, alert: false, explanation: null });
       }
     }
   }

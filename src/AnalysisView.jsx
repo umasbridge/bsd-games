@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase as defaultSupabase } from './supabase.js';
-import HandDiagram, { BiddingTable } from './HandDiagram.jsx';
+import HandDiagram, { BiddingTable, parseBiddingFromLin } from './HandDiagram.jsx';
 import { openHandviewer } from './linExport.js';
 
 export default function AnalysisView({ supabase: sbProp, analysis, userId, onBack, onDisplayRows, DiscussionView }) {
@@ -1184,8 +1184,9 @@ function suitColor(d) {
 
 function InlineBidding({ lin }) {
   if (!lin) return null;
-  const mbMatch = lin.match(/mb\|([^|]*)\|/);
-  if (!mbMatch || !mbMatch[1]) return <span className="text-gray-400 text-xs">No bidding data</span>;
+  const parsed = parseBiddingFromLin(lin);
+  if (!parsed || !parsed.length) return <span className="text-gray-400 text-xs">No bidding data</span>;
+  const bids = parsed.map(b => b.bid);
 
   const dealerMatch = lin.match(/md\|(\d)/);
   const linDealer = dealerMatch ? parseInt(dealerMatch[1]) : 3;
@@ -1194,14 +1195,6 @@ function InlineBidding({ lin }) {
 
   const dirs = ['W', 'N', 'E', 'S'];
   const startIdx = dirs.indexOf(startDir);
-
-  const bids = [];
-  const regex = /([1-7][CDHSN]T?|P|X{1,2})/gi;
-  let m;
-  while ((m = regex.exec(mbMatch[1])) !== null) {
-    bids.push(m[1].toUpperCase());
-  }
-  if (!bids.length) return null;
 
   const rows = [];
   let currentRow = new Array(4).fill(null);
@@ -1258,13 +1251,10 @@ function hasDefenderBidHigh(result) {
 
   const declarerSide = (declarer === 'N' || declarer === 'S') ? 'NS' : 'EW';
 
-  // Extract bidding from LIN: mb|1Cp2Hp...|
-  const mbMatch = result.lin.match(/mb\|([^|]*)\|/);
-  if (!mbMatch) return false;
+  const parsed = parseBiddingFromLin(result.lin);
+  if (!parsed) return false;
 
-  const biddingStr = mbMatch[1];
-  // Parse bids — each bid is like P, 1C, 2H, 3NT, X, XX
-  // We need to track direction: starts from dealer, goes clockwise
+  // Track direction: starts from dealer, goes clockwise
   const dealerMatch = result.lin.match(/md\|(\d)/);
   if (!dealerMatch) return false;
 
@@ -1273,11 +1263,7 @@ function hasDefenderBidHigh(result) {
   const dirOrder = ['S', 'W', 'N', 'E'];
   let currentDirIdx = dealerIdx - 1; // 0-based
 
-  // Parse individual bids from the bidding string
-  const bidRegex = /([1-7][CDHSN]T?|P|X{1,2})/gi;
-  let m;
-  while ((m = bidRegex.exec(biddingStr)) !== null) {
-    const bid = m[1].toUpperCase();
+  for (const { bid } of parsed) {
     const dir = dirOrder[currentDirIdx % 4];
     const side = (dir === 'N' || dir === 'S') ? 'NS' : 'EW';
 
