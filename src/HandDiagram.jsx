@@ -417,6 +417,8 @@ export function BiddingTable({ lin, dealer, compact }) {
 
   return (
     <div style={{ border: '1px solid #e5e7eb', borderRadius: 6, padding: compact ? 3 : 4, display: 'inline-block' }}>
+      {/* ship the hover rule with the component — host apps don't load our index.css */}
+      <style>{'td:hover > .bid-tooltip { opacity: 1 !important; }'}</style>
       <table style={{ borderCollapse: 'collapse', fontSize, width: '100%' }}>
         <thead>
           <tr style={{ borderBottom: '1px solid #d1d5db' }}>
@@ -473,11 +475,11 @@ export function parseBiddingFromLin(lin) {
       const isAlert = raw.endsWith('!');
       const bidStr = isAlert ? raw.slice(0, -1) : raw;
       let explanation = null;
-      if (isAlert && i + 2 < tags.length && tags[i + 2] === 'an' && i + 3 < tags.length) {
-        explanation = tags[i + 3];
+      if (i + 2 < tags.length && tags[i + 2] === 'an' && i + 3 < tags.length) {
+        explanation = tags[i + 3].trim() || null;
       }
       const call = normalizeCall(bidStr);
-      if (call) bids.push({ bid: call, alert: isAlert, explanation });
+      if (call) bids.push({ bid: call, alert: isAlert || !!explanation, explanation });
     }
   }
 
