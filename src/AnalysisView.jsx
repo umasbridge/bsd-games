@@ -606,15 +606,17 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
           }
 
           const needed = minLevel + 6;
+          const oppsGame = isGameContract(actualLevel, r.contract_denom);
           let saveScore;
           if (maxT >= needed) {
             // Save actually makes — compute making score (from defender's perspective)
             const isMinor = denom === 'C' || denom === 'D';
             saveScore = computeScore(minLevel, denom, maxT, defVul, isMinor);
           } else {
-            // Goes down — assume doubled
+            // Goes down — doubled over a game, undoubled in a part-score battle
             const down = needed - maxT;
-            saveScore = doubledDownScore(down, defVul);
+            saveScore = oppsGame ? doubledDownScore(down, defVul)
+                                 : (defVul ? -100 * down : -50 * down);
           }
 
           // saveScore is from defender's perspective. Compare vs defActual.
@@ -625,7 +627,7 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
             const ourScore = weAreDeclaring ? -saveScore : saveScore;
             const line = {
               type: 'save',
-              contract: { level: minLevel, denom, x: down > 0 ? 'X' : '', dir: bestDir, ot },
+              contract: { level: minLevel, denom, x: down > 0 && oppsGame ? 'X' : '', dir: bestDir, ot },
               ourScore,
             };
             if (otherRoomOurScore != null) line.imps = scoreToImps(ourScore + otherRoomOurScore);
@@ -742,16 +744,19 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
               ? r.contract_level : r.contract_level + 1;
             if (minLevel > 7) continue;
             const needed = minLevel + 6;
+            const oppsGame = isGameContract(r.contract_level, r.contract_denom);
             let saveScore;
             if (maxT >= needed) {
               saveScore = computeScore(minLevel, denom, maxT, ourVul, isMinor);
             } else {
-              saveScore = doubledDownScore(needed - maxT, ourVul);
+              const down = needed - maxT;
+              saveScore = oppsGame ? doubledDownScore(down, ourVul)
+                                   : (ourVul ? -100 * down : -50 * down);
             }
             if (saveScore > ourActualScore) {
               const down = Math.max(0, needed - maxT);
               pushAltLine('save',
-                { level: minLevel, denom, x: down > 0 ? 'X' : '', dir: bestDir, ot: maxT >= needed ? maxT - needed : -down },
+                { level: minLevel, denom, x: down > 0 && oppsGame ? 'X' : '', dir: bestDir, ot: maxT >= needed ? maxT - needed : -down },
                 saveScore);
             }
           }
@@ -1021,6 +1026,15 @@ function TravellerPopup({ popup, board, result, otherRoom, boardResults, partici
 const SUIT_SYMBOLS_T = { S: '♠', H: '♥', D: '♦', C: '♣' };
 const DENOM_ORDER = { C: 0, D: 1, H: 2, S: 3, NT: 4 };
 function denomRank(d) { return DENOM_ORDER[d] ?? -1; }
+
+// Trick points >= 100 = game contract. A save over a game/slam gets
+// doubled in practice; a save in a part-score battle usually doesn't.
+function isGameContract(level, denom) {
+  const pts = denom === 'NT' ? 40 + 30 * (level - 1)
+    : (denom === 'H' || denom === 'S') ? 30 * level
+    : 20 * level;
+  return pts >= 100;
+}
 
 function TravellerTable({ boardResults, participantMap, highlightParticipantId, isTeams }) {
   const [sortKey, setSortKey] = useState('ns');
