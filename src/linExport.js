@@ -18,6 +18,12 @@ export function openHandviewer(lin) {
   if (!lin) return;
   const url = `https://www.bridgebase.com/tools/handviewer.html?bbo=y&lin=${encodeURIComponent(lin)}`;
 
+  // Desktop: draggable floating window, docked bottom-right
+  if (window.innerWidth >= 768) {
+    openFloatingHandviewer(url);
+    return;
+  }
+
   // Full-screen in-app overlay (works on phones where a new tab has no way back)
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#fff;display:flex;flex-direction:column;';
@@ -61,6 +67,78 @@ export function openHandviewer(lin) {
   // Hardware/browser back closes the overlay instead of leaving the app
   history.pushState({ handviewer: true }, '');
   window.addEventListener('popstate', onPop);
+  document.addEventListener('keydown', onKey);
+}
+
+function openFloatingHandviewer(url) {
+  // Only one handviewer window at a time — opening a new hand replaces it
+  document.getElementById('bbo-handviewer-float')?.remove();
+
+  const win = document.createElement('div');
+  win.id = 'bbo-handviewer-float';
+  const w = Math.min(560, window.innerWidth - 32);
+  const h = Math.min(620, window.innerHeight - 32);
+  win.style.cssText = `position:fixed;right:16px;bottom:16px;width:${w}px;height:${h}px;z-index:9999;` +
+    'background:#fff;border:1px solid #d1d5db;border-radius:8px;overflow:hidden;' +
+    'box-shadow:0 8px 24px rgba(0,0,0,0.25);display:flex;flex-direction:column;';
+
+  const cleanup = () => {
+    win.remove();
+    document.removeEventListener('keydown', onKey);
+  };
+  const onKey = (e) => { if (e.key === 'Escape') cleanup(); };
+
+  const bar = document.createElement('div');
+  bar.style.cssText = 'display:flex;align-items:center;gap:10px;padding:6px 10px;background:#1f2937;flex-shrink:0;cursor:move;user-select:none;';
+
+  const title = document.createElement('span');
+  title.textContent = 'BBO Handviewer';
+  title.style.cssText = 'color:#fff;font-size:13px;font-weight:600;';
+
+  const ext = document.createElement('a');
+  ext.textContent = 'New tab ↗';
+  ext.href = url;
+  ext.target = '_blank';
+  ext.rel = 'noopener';
+  ext.style.cssText = 'margin-left:auto;color:#93c5fd;font-size:12px;text-decoration:none;';
+
+  const close = document.createElement('button');
+  close.textContent = '✕';
+  close.style.cssText = 'background:none;border:none;color:#d1d5db;font-size:14px;cursor:pointer;padding:2px 6px;';
+  close.onclick = cleanup;
+
+  const iframe = document.createElement('iframe');
+  iframe.src = url;
+  iframe.style.cssText = 'flex:1;border:none;width:100%;';
+
+  bar.onmousedown = (e) => {
+    if (e.target === ext || e.target === close) return;
+    e.preventDefault();
+    const rect = win.getBoundingClientRect();
+    const offX = e.clientX - rect.left;
+    const offY = e.clientY - rect.top;
+    // switch from right/bottom to left/top anchoring so drag math is direct
+    win.style.left = rect.left + 'px';
+    win.style.top = rect.top + 'px';
+    win.style.right = 'auto';
+    win.style.bottom = 'auto';
+    iframe.style.pointerEvents = 'none'; // iframe would swallow mousemove
+    const onMove = (ev) => {
+      win.style.left = Math.max(0, Math.min(ev.clientX - offX, window.innerWidth - 60)) + 'px';
+      win.style.top = Math.max(0, Math.min(ev.clientY - offY, window.innerHeight - 40)) + 'px';
+    };
+    const onUp = () => {
+      iframe.style.pointerEvents = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  };
+
+  bar.append(title, ext, close);
+  win.append(bar, iframe);
+  document.body.appendChild(win);
   document.addEventListener('keydown', onKey);
 }
 
