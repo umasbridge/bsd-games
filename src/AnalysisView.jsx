@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase as defaultSupabase } from './supabase.js';
 import HandDiagram, { BiddingTable, parseBiddingFromLin } from './HandDiagram.jsx';
-import { openHandviewer } from './linExport.js';
+import { openHandviewer, linHasBidding, linHasPlay } from './linExport.js';
 
 export default function AnalysisView({ supabase: sbProp, analysis, userId, onBack, onDisplayRows, DiscussionView }) {
   const supabase = sbProp || defaultSupabase;
@@ -1138,7 +1138,7 @@ function TravellerTable({ boardResults, participantMap, highlightParticipantId, 
                   : <td className="py-1 px-1.5 text-right">{pct != null && <PctBadge pct={pct} />}</td>
                 }
                 <td className="py-1 px-1.5 text-center">
-                  {r.lin && (
+                  {(linHasPlay(r.lin) || linHasBidding(r.lin)) && (
                     <button
                       onClick={(e) => { e.stopPropagation(); openHandviewer(r.lin); }}
                       className="px-1.5 py-0.5 rounded text-xs bg-emerald-600 text-white hover:bg-emerald-700"

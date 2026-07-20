@@ -14,6 +14,11 @@ function boardToLin(board, boardNumber) {
   return `qx|o${boardNumber}|md|${dealer}${hands}|rh||ah|Board ${boardNumber}|sv|${vul}|pg||`;
 }
 
+// What a stored LIN actually contains — some sources (e.g. BridgeWebs)
+// only have deal + contract, where the handviewer adds nothing.
+export function linHasBidding(lin) { return !!lin && /(^|\|)mb\|/.test(lin); }
+export function linHasPlay(lin) { return !!lin && /(^|\|)pc\|/.test(lin); }
+
 export function openHandviewer(lin) {
   if (!lin) return;
   const url = `https://www.bridgebase.com/tools/handviewer.html?bbo=y&lin=${encodeURIComponent(lin)}`;
