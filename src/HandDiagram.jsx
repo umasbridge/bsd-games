@@ -4,7 +4,20 @@ import { openHandviewer } from './linExport.js';
 const SUIT_SYM = { S: '♠', H: '♥', D: '♦', C: '♣' };
 const SUIT_CLR = { S: '#000', H: '#c62828', D: '#c62828', C: '#2e7d32' };
 
-export default function HandDiagram({ board, result, otherRoom, participantMap, ourParticipantId, onOtherRoom, onAnalysis, onTraveller, onNotes, notesLoading, isTeams, ddBest, optimalLines, boardNumber, isImpPairs }) {
+function UnreadBadge({ count }) {
+  if (!count) return null;
+  return (
+    <span style={{
+      position: 'absolute', top: -7, right: -7,
+      background: '#dc2626', color: '#fff', borderRadius: 9,
+      fontSize: '0.6rem', fontWeight: 700, lineHeight: '14px',
+      minWidth: 14, height: 14, padding: '0 3px', textAlign: 'center',
+      boxSizing: 'border-box', pointerEvents: 'none',
+    }}>{count > 99 ? '99+' : count}</span>
+  );
+}
+
+export default function HandDiagram({ board, result, otherRoom, participantMap, ourParticipantId, onOtherRoom, onAnalysis, onTraveller, onNotes, notesLoading, notesUnread, isTeams, ddBest, optimalLines, boardNumber, isImpPairs }) {
   const vul = board.vulnerability;
 
   const playerLabel = (dir) => {
@@ -136,8 +149,9 @@ export default function HandDiagram({ board, result, otherRoom, participantMap, 
       )}
       {onNotes && (
         <button onClick={onNotes} disabled={notesLoading}
-          style={{ fontSize: '0.65rem', padding: '2px 6px', background: '#7c3aed', color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer', opacity: notesLoading ? 0.5 : 1 }}>
+          style={{ fontSize: '0.65rem', padding: '2px 6px', background: '#7c3aed', color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer', opacity: notesLoading ? 0.5 : 1, position: 'relative' }}>
           {notesLoading ? '...' : 'My Notes'}
+          <UnreadBadge count={notesUnread} />
         </button>
       )}
     </div>
@@ -216,7 +230,7 @@ export default function HandDiagram({ board, result, otherRoom, participantMap, 
             <button onClick={onTraveller} style={{ fontSize: '0.65rem', padding: '2px 5px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer' }}>Traveller</button>
           )}
           {onNotes && (
-            <button onClick={onNotes} disabled={notesLoading} style={{ fontSize: '0.65rem', padding: '2px 5px', background: '#7c3aed', color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer', opacity: notesLoading ? 0.5 : 1 }}>{notesLoading ? '...' : 'Notes'}</button>
+            <button onClick={onNotes} disabled={notesLoading} style={{ fontSize: '0.65rem', padding: '2px 5px', background: '#7c3aed', color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer', opacity: notesLoading ? 0.5 : 1, position: 'relative' }}>{notesLoading ? '...' : 'Notes'}<UnreadBadge count={notesUnread} /></button>
           )}
         </div>
       </div>

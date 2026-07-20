@@ -9,6 +9,7 @@ export default function AnalysisView({ supabase: sbProp, analysis, userId, onBac
   const [results, setResults] = useState([]);
   const [participants, setParticipants] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [notesUnread, setNotesUnread] = useState({});
 
   const event = analysis.bg_events;
   const tournament = event?.bg_tournaments;
@@ -80,6 +81,20 @@ export default function AnalysisView({ supabase: sbProp, analysis, userId, onBac
         setLoading(false);
       });
   }, [event?.id]);
+
+  // Unread notes counts per board (discussions keyed '<analysisId>:<boardId>')
+  useEffect(() => {
+    if (!analysis?.id || !userId) return;
+    supabase.rpc('get_game_notes_unread', { p_analysis_id: analysis.id }).then(({ data }) => {
+      if (!data) return;
+      const m = {};
+      for (const r of data) {
+        const boardId = (r.resource_id || '').split(':')[1];
+        if (boardId) m[boardId] = Number(r.unread_count) || 0;
+      }
+      setNotesUnread(m);
+    }, () => {});
+  }, [analysis?.id, userId]);
 
   const participantMap = useMemo(() => {
     const m = {};
@@ -167,6 +182,8 @@ export default function AnalysisView({ supabase: sbProp, analysis, userId, onBac
               analysisName={analysis.name}
               sharedWith={filters.shared_with}
               DiscussionView={DiscussionView}
+              notesUnread={notesUnread[row.board?.id] || 0}
+              onNotesRead={() => setNotesUnread(m => ({ ...m, [row.board?.id]: 0 }))}
             />
           ))
         )}
@@ -396,12 +413,13 @@ export function buildPairRows(boards, results, filters) {
 
 // ── Board row with popup panels ──────────────────────────────────
 
-function BoardRow({ row, isTeams, participantMap, boardResults, highlightParticipantId, ourParticipantId, supabase, userId, analysisId, analysisName, sharedWith, DiscussionView }) {
+function BoardRow({ row, isTeams, participantMap, boardResults, highlightParticipantId, ourParticipantId, supabase, userId, analysisId, analysisName, sharedWith, DiscussionView, notesUnread, onNotesRead }) {
   const [popup, setPopup] = useState(null);
   const [notesDiscussion, setNotesDiscussion] = useState(null);
   const [notesLoading, setNotesLoading] = useState(false);
 
   const handleOpenNotes = async () => {
+    if (onNotesRead) onNotesRead(); // opening marks the discussion read
     if (notesDiscussion) {
       setPopup(popup === 'notes' ? null : 'notes');
       return;
@@ -767,6 +785,7 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
               boardNumber={row.displayBoardNumber ?? row.board.board_number}
               onNotes={supabase ? () => handleOpenNotes() : undefined}
               notesLoading={notesLoading}
+              notesUnread={notesUnread}
               isImpPairs={!isTeams && boardResults.some(r => r.imps_ns != null)}
             />
           </div>
