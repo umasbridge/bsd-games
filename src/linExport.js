@@ -15,9 +15,18 @@ function boardToLin(board, boardNumber) {
 }
 
 // What a stored LIN actually contains — some sources (e.g. BridgeWebs)
-// only have deal + contract, where the handviewer adds nothing.
-export function linHasBidding(lin) { return !!lin && /(^|\|)mb\|/.test(lin); }
-export function linHasPlay(lin) { return !!lin && /(^|\|)pc\|/.test(lin); }
+// only have deal + contract, where the handviewer adds nothing. Old
+// imports even stored empty hands (md|3SHDC,...) with the opening lead
+// as a lone pc| tag, so require real cards and more than one played card.
+function linHasCards(lin) {
+  if (!lin) return false;
+  const m = lin.match(/(^|\|)md\|([^|]*)/);
+  return !!m && /[AKQJT2-9]/.test(m[2].replace(/^\d/, ''));
+}
+export function linHasBidding(lin) { return linHasCards(lin) && /(^|\|)mb\|/.test(lin); }
+export function linHasPlay(lin) {
+  return linHasCards(lin) && ((lin.match(/(^|\|)pc\|/g) || []).length >= 2);
+}
 
 export function openHandviewer(lin) {
   if (!lin) return;
