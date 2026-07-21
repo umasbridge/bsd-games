@@ -534,7 +534,9 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
       const resultLines = [];
       const ourActualScore = ourSideIsNs ? nsScore : -nsScore;
 
-      // 1. Declaring side's better contracts
+      // 1. Declaring side's better contracts — must still outbid the
+      // best contract the defenders can make (no impossible contracts)
+      const defBestContract = bestDDContract(b, declarerIsNs ? 'ew' : 'ns', defVul);
       for (const denom of ['C', 'D', 'H', 'S', 'NT']) {
         const denomKey = denom === 'NT' ? 'nt' : denom.toLowerCase();
         const isMinor = denom === 'C' || denom === 'D';
@@ -545,6 +547,7 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
         }
         if (maxT < 7) continue;
         const bestLevel = maxT - 6;
+        if (bestLevel < outbidMinLevel(denom, defBestContract)) continue;
         const score = computeScore(bestLevel, denom, maxT, declVul, isMinor);
         if (score > declActual) {
           const ourScore = weAreDeclaring ? score : -score;
@@ -721,6 +724,12 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
           resultLines.push(altLine);
         };
 
+        // Opponents' best makeable contract — the bar our alternates must clear
+        const oppSide = ourSideIsNs ? 'ew' : 'ns';
+        const oppBestContract = weAreDeclaring
+          ? bestDDContract(b, oppSide, isVul(oppSide, b.vulnerability))
+          : null;
+
         for (const denom of ['C', 'D', 'H', 'S', 'NT']) {
           const denomKey = denom === 'NT' ? 'nt' : denom.toLowerCase();
           const isMinor = denom === 'C' || denom === 'D';
@@ -732,14 +741,28 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
           if (!bestDir) continue;
 
           if (weAreDeclaring) {
-            // We won the auction — any makeable contract was available
-            if (maxT < 7) continue;
-            const bestLevel = maxT - 6;
-            const bestScore = computeScore(bestLevel, denom, maxT, ourVul, isMinor);
-            if (bestScore > ourActualScore) {
-              pushAltLine('alternate',
-                { level: bestLevel, denom, x: '', dir: bestDir, ot: maxT - (bestLevel + 6) },
-                bestScore);
+            // Our alternates must still outbid the opponents' best
+            // makeable contract — they wouldn't let us play lower.
+            const minLvl = outbidMinLevel(denom, oppBestContract);
+            if (maxT >= minLvl + 6) {
+              const bestLevel = maxT - 6;
+              const bestScore = computeScore(bestLevel, denom, maxT, ourVul, isMinor);
+              if (bestScore > ourActualScore) {
+                pushAltLine('alternate',
+                  { level: bestLevel, denom, x: '', dir: bestDir, ot: maxT - (bestLevel + 6) },
+                  bestScore);
+              }
+            } else if (oppBestContract && minLvl <= 7 && maxT > 0) {
+              // Nothing makeable high enough — was a cheaper save available?
+              const down = minLvl + 6 - maxT;
+              const oppsGame = isGameContract(oppBestContract.level, oppBestContract.denom);
+              const saveScore = oppsGame ? doubledDownScore(down, ourVul)
+                                         : (ourVul ? -100 * down : -50 * down);
+              if (saveScore > ourActualScore) {
+                pushAltLine('save',
+                  { level: minLvl, denom, x: oppsGame ? 'X' : '', dir: bestDir, ot: -down },
+                  saveScore);
+              }
             }
           } else {
             // Opponents declared — we can only outbid them (save)
@@ -763,6 +786,14 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
                 saveScore);
             }
           }
+        }
+
+        // When we outbid them (e.g. a save), letting them play their best
+        // contract is also an option — show it if it beats what we got.
+        if (weAreDeclaring && oppBestContract && -oppBestContract.score > ourActualScore) {
+          pushAltLine('defense',
+            { level: oppBestContract.level, denom: oppBestContract.denom, x: '', dir: oppBestContract.dir, ot: 0 },
+            -oppBestContract.score);
         }
 
         // Sort alternates by score descending (keep DD optimal first)
@@ -1029,6 +1060,14 @@ function TravellerPopup({ popup, board, result, otherRoom, boardResults, partici
 const SUIT_SYMBOLS_T = { S: '♠', H: '♥', D: '♦', C: '♣' };
 const DENOM_ORDER = { C: 0, D: 1, H: 2, S: 3, NT: 4 };
 function denomRank(d) { return DENOM_ORDER[d] ?? -1; }
+
+// In a competitive auction the opponents won't let us stop below
+// outbidding the best contract they can make themselves — anything
+// lower is an impossible contract, not a real alternative.
+function outbidMinLevel(denom, oppBest) {
+  if (!oppBest) return 1;
+  return denomRank(denom) > denomRank(oppBest.denom) ? oppBest.level : oppBest.level + 1;
+}
 
 // Trick points >= 100 = game contract. A save over a game/slam gets
 // doubled in practice; a save in a part-score battle usually doesn't.
