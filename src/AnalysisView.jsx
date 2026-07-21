@@ -498,7 +498,10 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
       && row.result.declarer && row.result.contract_level) {
     const b = row.board;
     const r = row.result;
-    const fieldScores = boardResults.length > 1 ? boardResults.map(x => x.score || 0) : null;
+    // Exclude our own row: a hypothetical score is compared against the
+    // rest of the field, else it self-ties and drags toward 50%
+    const otherResults = boardResults.filter(x => x.id !== r.id);
+    const fieldScores = otherResults.length ? otherResults.map(x => x.score || 0) : null;
     const declarerIsNs = r.declarer === 'N' || r.declarer === 'S';
     const ourSideIsNs = ourParticipantId
       ? r.ns_participant_id === ourParticipantId
@@ -1441,9 +1444,12 @@ function AnalysisPanel({ board, result, otherRoom, boardResults, participantMap,
         line.imps = scoreToImps(ourScore + ourOther);
       }
       if (!isTeams && boardResults.length > 1) {
-        const fieldScores = boardResults.map(x => x.score || 0);
-        line.nsMp = calcMpPct(line.nsScore, fieldScores, 'ns');
-        line.ewMp = calcMpPct(-line.nsScore, fieldScores, 'ew');
+        // Compare hypothetical scores against the rest of the field (no self-tie)
+        const fieldScores = boardResults.filter(x => x.id !== r.id).map(x => x.score || 0);
+        if (fieldScores.length) {
+          line.nsMp = calcMpPct(line.nsScore, fieldScores, 'ns');
+          line.ewMp = calcMpPct(-line.nsScore, fieldScores, 'ew');
+        }
       }
     }
   }
