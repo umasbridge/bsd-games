@@ -327,7 +327,9 @@ def parse_hand_from_field(hand_str):
         except ValueError:
             hcp[f'hcp_{d}'] = None
 
-    # DD tricks (positions 20-39)
+    # DD tricks (positions 20-39). BridgeWebs only reports makeable
+    # contracts: values are 7-13, with 1 as a "nothing makeable" sentinel
+    # (never a literal trick count) — store those as unknown.
     dd = {}
     dd_denoms = ['c', 'd', 'h', 's', 'nt']
     dd_dirs = ['n', 's', 'e', 'w']
@@ -337,8 +339,10 @@ def parse_hand_from_field(hand_str):
             idx = 20 + i * 5 + j
             try:
                 val = int(parts[idx]) if idx < len(parts) and parts[idx].strip() else None
+                if val is not None and val < 7:
+                    val = None
                 dd[f'dd_{d}_{denom}'] = val
-                if val is not None and val > 0:
+                if val is not None:
                     has_dd = True
             except ValueError:
                 dd[f'dd_{d}_{denom}'] = None
