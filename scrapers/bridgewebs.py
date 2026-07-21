@@ -20,7 +20,7 @@ import urllib.request
 import urllib.parse
 from xml.etree import ElementTree
 
-from utils import hand_hcp, contract_display, compute_dd
+from utils import hand_hcp, contract_display, fill_dd
 from lin import generate_lin
 from db import (
     upsert_tournament, upsert_event, upsert_stage,
@@ -327,28 +327,12 @@ def parse_hand_from_field(hand_str):
         except ValueError:
             hcp[f'hcp_{d}'] = None
 
-    # DD tricks (positions 20-39). BridgeWebs only reports makeable
-    # contracts: values are 7-13, with 1 as a "nothing makeable" sentinel
-    # (never a literal trick count) — store those as unknown.
-    dd = {}
-    dd_denoms = ['c', 'd', 'h', 's', 'nt']
-    dd_dirs = ['n', 's', 'e', 'w']
-    has_dd = False
-    for i, d in enumerate(dd_dirs):
-        for j, denom in enumerate(dd_denoms):
-            idx = 20 + i * 5 + j
-            try:
-                val = int(parts[idx]) if idx < len(parts) and parts[idx].strip() else None
-                if val is not None and val < 7:
-                    val = None
-                dd[f'dd_{d}_{denom}'] = val
-                if val is not None:
-                    has_dd = True
-            except ValueError:
-                dd[f'dd_{d}_{denom}'] = None
-
-    if not has_dd:
-        dd = {k: None for k in dd}
+    # Positions 20-39 hold BridgeWebs' partial DD (makeable contracts
+    # only, with 1 as a "nothing makeable" sentinel). We ignore it —
+    # DD is always computed with endplay from the hands (see fill_dd).
+    dd = {f'dd_{d}_{denom}': None
+          for d in ['n', 's', 'e', 'w']
+          for denom in ['c', 'd', 'h', 's', 'nt']}
 
     # Optimum
     minimax = parts[40].strip() if len(parts) > 40 and parts[40].strip() else None
@@ -740,21 +724,12 @@ def scrape(url, dry_run=False, name=None):
                 print(f'    {e}')
         return
 
+    print(f'  Computing DD for {len(board_rows)} boards...')
+    dd_count = fill_dd(board_rows)
+    print(f'  DD solved for {dd_count}/{len(board_rows)} boards')
+
     print(f'  Inserting {len(board_rows)} boards...')
     board_id_map = insert_boards(board_rows)
-
-    needs_dd = [b for b in board_rows if b.get('dd_n_nt') is None]
-    if needs_dd:
-        print(f'  Computing DD for {len(needs_dd)} boards...')
-        dd_count = 0
-        for b in needs_dd:
-            dd_data = compute_dd(b)
-            if dd_data:
-                board_id = board_id_map.get((b.get('round'), b['board_number']))
-                if board_id:
-                    update_board_dd(board_id, dd_data)
-                    dd_count += 1
-        print(f'  Updated {dd_count} boards with DD data')
 
     for result in result_rows:
         bn = result.pop('_board_number')

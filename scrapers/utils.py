@@ -23,6 +23,23 @@ def load_env():
 
 # ── Double-dummy analysis ────────────────────────────────────────
 
+def fill_dd(board_rows):
+    """Overwrite dd_* on each row with endplay-computed values.
+
+    DD is always derived from the hands by our own solver — never taken
+    from the source site — so every deal gets a complete, consistent
+    20-cell table regardless of scraper. Returns the number of rows
+    solved (rows without complete hands are left untouched).
+    """
+    n = 0
+    for b in board_rows:
+        dd = compute_dd(b)
+        if dd:
+            b.update(dd)
+            n += 1
+    return n
+
+
 def compute_dd(board_row):
     """Compute double-dummy tricks for a board row dict.
 

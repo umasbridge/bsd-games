@@ -28,7 +28,7 @@ import urllib.request
 
 from utils import (
     SRINI_CARD_MAP, SRINI_DEALER_MAP, SRINI_DECL_MAP, SRINI_DENOM_MAP,
-    SRINI_SUIT_MAP, SRINI_VUL_MAP, hand_hcp, contract_display, compute_dd,
+    SRINI_SUIT_MAP, SRINI_VUL_MAP, hand_hcp, contract_display, fill_dd,
     dealer_from_board,
 )
 from lin import generate_lin
@@ -793,22 +793,10 @@ def scrape(base_url, dry_run=False, name=None):
         result_rows = results_by_stage.get(stage_name, [])
 
         if board_rows:
+            # DD always computed with endplay (single source across scrapers)
+            fill_dd(board_rows)
             print(f'  Inserting {len(board_rows)} boards for stage "{stage_name}"...')
             board_id_map = insert_boards(board_rows)
-
-            # Compute DD for boards missing it
-            for (rnd, bnum), bid in board_id_map.items():
-                # Find the board_row to check DD data
-                matching = [b for b in board_rows if b['board_number'] == bnum]
-                if matching:
-                    br = matching[0]
-                    has_dd = any(br.get(f'dd_{d}_{dn}') is not None
-                                for d in ['n', 'e', 's', 'w']
-                                for dn in ['c', 'd', 'h', 's', 'nt'])
-                    if not has_dd:
-                        dd = compute_dd(br)
-                        if dd:
-                            update_board_dd(bid, dd)
 
             # Fill in board_id on results
             for result in result_rows:

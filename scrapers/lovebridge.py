@@ -25,7 +25,7 @@ import ssl
 import sys
 import urllib.request
 
-from utils import hand_hcp, contract_display
+from utils import hand_hcp, contract_display, fill_dd
 from lin import generate_lin
 from db import (
     upsert_tournament, upsert_event, insert_stage, find_stage,
@@ -330,19 +330,14 @@ def fetch_boards_data(session_id, stage_id):
                 hands[f'{d}_diamonds'], hands[f'{d}_clubs']
             )
 
-        dd = {}
-        opt = b.get('optimumScores', {})
-        max_tricks = opt.get('maxTricks', {})
-        for direction in ['NORTH', 'EAST', 'SOUTH', 'WEST']:
-            d = direction[0].lower()
-            tricks = max_tricks.get(direction, {})
-            dd[f'dd_{d}_c'] = tricks.get('CLUB')
-            dd[f'dd_{d}_d'] = tricks.get('DIAMOND')
-            dd[f'dd_{d}_h'] = tricks.get('HEART')
-            dd[f'dd_{d}_s'] = tricks.get('SPADE')
-            dd[f'dd_{d}_nt'] = tricks.get('NT')
+        # LoveBridge publishes its own DD table (optimumScores.maxTricks)
+        # but we ignore it — DD is always computed with endplay from the
+        # hands (see fill_dd), the single source across all scrapers.
+        dd = {f'dd_{d}_{k}': None
+              for d in ['n', 'e', 's', 'w']
+              for k in ['c', 'd', 'h', 's', 'nt']}
 
-        optimal_score = opt.get('score')
+        optimal_score = b.get('optimumScores', {}).get('score')
 
         rows.append({
             'stage_id': stage_id,
@@ -814,7 +809,9 @@ def _scrape_stage(session, session_ids, tournament_id, event_id, dry_run=False):
         print(f'    Boards: {len(all_board_rows)}, Results: {len(all_result_rows)}')
         return
 
-    # Insert boards
+    # Insert boards (DD always computed with endplay, single source)
+    print(f'Computing DD for {len(all_board_rows)} boards...')
+    fill_dd(all_board_rows)
     board_id_map = insert_boards(all_board_rows)
 
     for result in all_result_rows:
