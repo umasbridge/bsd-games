@@ -610,7 +610,12 @@ function ddScore(level, denom, tricks, vul, isMinor) {
   return score;
 }
 
-function hasDDData(board) { return board.dd_n_nt != null || board.dd_s_nt != null; }
+function hasDDData(board) {
+  for (const d of ['n', 's', 'e', 'w'])
+    for (const k of ['c', 'd', 'h', 's', 'nt'])
+      if (board[`dd_${d}_${k}`] != null) return true;
+  return false;
+}
 
 const IMP_TABLE = [
   [0,10,0],[20,40,1],[50,80,2],[90,120,3],[130,160,4],[170,210,5],

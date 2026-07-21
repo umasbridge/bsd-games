@@ -1768,7 +1768,12 @@ function PairsCompetingSection({ side, data, actualMp }) {
   );
 }
 
-function hasDDData(board) { return board.dd_n_nt != null || board.dd_s_nt != null; }
+function hasDDData(board) {
+  for (const d of ['n', 's', 'e', 'w'])
+    for (const k of ['c', 'd', 'h', 's', 'nt'])
+      if (board[`dd_${d}_${k}`] != null) return true;
+  return false;
+}
 
 function calcMpPct(ourScore, fieldScores, ourSide) {
   let mp = 0, count = 0;

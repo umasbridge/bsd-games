@@ -173,5 +173,8 @@ function computeDDScore(denom, level, tricks, vul) {
 
 
 function hasDDData(board) {
-  return board.dd_n_nt != null || board.dd_s_nt != null;
+  for (const d of ['n', 's', 'e', 'w'])
+    for (const k of ['c', 'd', 'h', 's', 'nt'])
+      if (board[`dd_${d}_${k}`] != null) return true;
+  return false;
 }
