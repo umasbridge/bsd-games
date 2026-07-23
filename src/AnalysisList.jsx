@@ -3,7 +3,7 @@ import { supabase as defaultSupabase } from './supabase.js';
 import { buildTeamRows, buildPairRows } from './AnalysisView.jsx';
 import { downloadLin } from './linExport.js';
 
-export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAdmin, onNew, onRetrieve, onOpen, onCreateNew, onLogout, onBack, Header, displayRowsCache }) {
+export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAdmin, onNew, onRetrieve, onOpen, onCreateNew, onLogout, onBack, Header, displayRowsCache, ShareDialog }) {
   const sb = sbProp || defaultSupabase;
   const [analyses, setAnalyses] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -130,14 +130,21 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
         )}
       </div>
 
-      {sharingAnalysis && (
+      {sharingAnalysis && (ShareDialog ? (
+        <ShareDialog
+          analysis={sharingAnalysis}
+          supabase={sb}
+          userId={userId}
+          onClose={() => setSharingAnalysis(null)}
+        />
+      ) : (
         <ShareAnalysisDialog
           analysis={sharingAnalysis}
           supabase={sb}
           userId={userId}
           onClose={() => setSharingAnalysis(null)}
         />
-      )}
+      ))}
     </div>
   );
 }
