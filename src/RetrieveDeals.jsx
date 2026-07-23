@@ -17,7 +17,7 @@ const KIND_BADGES = {
   team: { label: 'Team', cls: 'bg-purple-100 text-purple-800' },
 };
 
-export default function RetrieveDeals({ onBack, onRetrieved, mode = 'url' }) {
+export default function RetrieveDeals({ onBack, onRetrieved, mode = 'url', userId }) {
   const isBbo = mode === 'bbo';
   const title = isBbo ? 'Retrieve BBO Hands' : 'Retrieve Played Deals';
 
@@ -124,6 +124,7 @@ export default function RetrieveDeals({ onBack, onRetrieved, mode = 'url' }) {
         end_date: bboEnd || bboStart,
         keys,
         names,
+        user_id: userId,
       });
       setLoading(false);
       setStatus('');

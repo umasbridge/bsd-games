@@ -14,6 +14,7 @@ export default function GameAnalysis({ supabase, userId, userEmail, isAdmin, onL
     return (
       <CreateDealSetPicker
         supabase={supabase}
+        userId={userId}
         onBack={() => setView('list')}
         onRetrieve={() => setView('retrieve')}
         onRetrieveBbo={() => setView('retrieve-bbo')}
@@ -29,6 +30,7 @@ export default function GameAnalysis({ supabase, userId, userEmail, isAdmin, onL
     return (
       <RetrieveDeals
         supabase={supabase}
+        userId={userId}
         mode={view === 'retrieve-bbo' ? 'bbo' : 'url'}
         onBack={() => setView('create')}
         onRetrieved={() => setView('create')}

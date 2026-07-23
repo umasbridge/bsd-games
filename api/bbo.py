@@ -55,7 +55,8 @@ class handler(BaseHTTPRequestHandler):
                     if not sess:
                         missing.append(key)
                         continue
-                    import_session(sess, username, url, name=names.get(key))
+                    import_session(sess, username, url, name=names.get(key),
+                                   user_id=data.get('user_id'))
                     imported.append(names.get(key) or sess['label'])
                 result = {'success': True, 'imported': imported}
                 if missing:

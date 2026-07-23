@@ -297,7 +297,7 @@ function ShareAnalysisDialog({ analysis, supabase, userId, onClose }) {
 }
 
 
-export function CreateDealSetPicker({ supabase: sbProp, onBack, onRetrieve, onRetrieveBbo, onCreateFromSelection }) {
+export function CreateDealSetPicker({ supabase: sbProp, userId, onBack, onRetrieve, onRetrieveBbo, onCreateFromSelection }) {
   const sb = sbProp || defaultSupabase;
   const [tournaments, setTournaments] = useState([]);
   const [loadingTournaments, setLoadingTournaments] = useState(true);
@@ -313,7 +313,7 @@ export function CreateDealSetPicker({ supabase: sbProp, onBack, onRetrieve, onRe
     const { data } = await sb
       .from('bg_tournaments')
       .select(`
-        id, name, location, date_start, source_format,
+        id, name, location, date_start, source_format, created_by,
         bg_events ( id, name, type, scoring, event_order,
           bg_stages ( id, name, stage_order, source_url, source_meta,
             bg_boards ( id )
@@ -322,7 +322,12 @@ export function CreateDealSetPicker({ supabase: sbProp, onBack, onRetrieve, onRe
       `)
       .order('created_at', { ascending: false });
 
-    const sorted = (data || []).map(t => ({
+    // Club tournaments are shared; BBO retrieves are personal sessions —
+    // only show them to whoever retrieved them
+    const visible = (data || []).filter(t =>
+      t.source_format !== 'bbo' || !t.created_by || t.created_by === userId);
+
+    const sorted = visible.map(t => ({
       ...t,
       bg_events: (t.bg_events || [])
         .sort((a, b) => (a.event_order || 0) - (b.event_order || 0))
