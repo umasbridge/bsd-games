@@ -47,7 +47,7 @@ export default function RetrieveDeals({ onBack, onRetrieved, mode = 'url', userI
       const resp = await fetch('/api/scrape', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: trimmedUrl, name: trimmedName }),
+        body: JSON.stringify({ url: trimmedUrl, name: trimmedName, user_id: userId }),
       });
       const result = await resp.json();
       if (!resp.ok || result.error) {

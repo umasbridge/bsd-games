@@ -28,7 +28,14 @@ class handler(BaseHTTPRequestHandler):
             else:
                 from srini import scrape
 
-            scrape(url, name=name)
+            # If the tournament is already in the DB, scrape() skips the
+            # work and still returns its id — the grant below adds it to
+            # this user's personal picker list either way.
+            tournament_id = scrape(url, name=name)
+            user_id = data.get('user_id')
+            if tournament_id and user_id:
+                from db import grant_tournament_access
+                grant_tournament_access(tournament_id, user_id)
             self._json(200, {'success': True})
 
         except ValueError as e:

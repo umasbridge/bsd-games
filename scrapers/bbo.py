@@ -49,6 +49,7 @@ load_env()
 from db import (
     upsert_tournament, upsert_event, insert_stage,
     insert_participants, insert_boards, insert_board_results, stage_exists,
+    find_tournament_by_stage_url, grant_tournament_access,
 )
 
 BASE = 'https://www.bridgebase.com'
@@ -495,6 +496,8 @@ def import_session(sess, username, source_url, dry_run=False, travellers=True, n
     stage_url = f'{BASE}/myhands/hands.php#bbo-{sess["key"]}'
     if not dry_run and stage_exists(stage_url):
         print(f'  Already imported: {sess["label"]}. Skipping.')
+        if user_id:
+            grant_tournament_access(find_tournament_by_stage_url(stage_url), user_id)
         return
 
     # Fetch travellers: every table's result (with LIN) for each board
@@ -548,6 +551,8 @@ def import_session(sess, username, source_url, dry_run=False, travellers=True, n
         tournament_id, event_id, stage_id = 'dry-t', 'dry-e', 'dry-s'
     else:
         tournament_id = upsert_tournament(tournament_data)
+        if user_id:
+            grant_tournament_access(tournament_id, user_id)
         event_id = upsert_event({
             'tournament_id': tournament_id,
             'name': 'Main',

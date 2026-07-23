@@ -36,6 +36,7 @@ from db import (
     upsert_tournament, upsert_event, insert_stage, find_stage,
     insert_participants, insert_boards,
     insert_board_results, stage_exists, update_board_dd,
+    find_tournament_by_stage_url,
 )
 
 # SSL workaround for macOS
@@ -628,7 +629,7 @@ def scrape(base_url, dry_run=False, name=None):
     # Dedup check: skip if stages already exist for this URL
     if not dry_run and stage_exists(base_url):
         print('  Event already scraped. Skipping.')
-        return
+        return find_tournament_by_stage_url(base_url)
 
     # 2. Parse tournament metadata
     meta = parse_tournament_meta(settings, base_url)
@@ -820,6 +821,7 @@ def scrape(base_url, dry_run=False, name=None):
         print(f'  Errors ({len(errors)}):')
         for e in errors[:10]:
             print(f'    {e}')
+    return tournament_id
 
 
 # ── CLI ───────────────────────────────────────────────────────────

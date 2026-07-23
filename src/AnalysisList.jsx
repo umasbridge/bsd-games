@@ -310,22 +310,24 @@ export function CreateDealSetPicker({ supabase: sbProp, userId, onBack, onRetrie
   useEffect(() => { loadTournaments(); }, []);
 
   const loadTournaments = async () => {
+    // Personalized picker: only tournaments this user retrieved
+    // (bg_tournament_visibility; retrieving an existing URL grants access)
     const { data } = await sb
-      .from('bg_tournaments')
+      .from('bg_tournament_visibility')
       .select(`
-        id, name, location, date_start, source_format, created_by,
-        bg_events ( id, name, type, scoring, event_order,
-          bg_stages ( id, name, stage_order, source_url, source_meta,
-            bg_boards ( id )
+        bg_tournaments (
+          id, name, location, date_start, source_format, created_by, created_at,
+          bg_events ( id, name, type, scoring, event_order,
+            bg_stages ( id, name, stage_order, source_url, source_meta,
+              bg_boards ( id )
+            )
           )
         )
       `)
-      .order('created_at', { ascending: false });
+      .eq('user_id', userId);
 
-    // Club tournaments are shared; BBO retrieves are personal sessions —
-    // only show them to whoever retrieved them
-    const visible = (data || []).filter(t =>
-      t.source_format !== 'bbo' || !t.created_by || t.created_by === userId);
+    const visible = (data || []).map(r => r.bg_tournaments).filter(Boolean)
+      .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
 
     const sorted = visible.map(t => ({
       ...t,

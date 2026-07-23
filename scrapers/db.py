@@ -186,6 +186,32 @@ def stage_exists(source_url: str) -> bool:
     return len(resp.data) > 0
 
 
+def find_tournament_by_stage_url(source_url: str):
+    """Tournament id owning the stage with this source URL, or None."""
+    resp = (get_client().table('bg_stages')
+            .select('id, bg_events(tournament_id)')
+            .eq('source_url', source_url)
+            .limit(1)
+            .execute())
+    if resp.data:
+        ev = resp.data[0].get('bg_events') or {}
+        return ev.get('tournament_id')
+    return None
+
+
+def grant_tournament_access(tournament_id, user_id):
+    """Add a tournament to a user's personal picker list (idempotent).
+
+    Retrieving a URL that's already in the DB just grants access instead
+    of re-scraping — every user sees only tournaments they retrieved.
+    """
+    if not tournament_id or not user_id:
+        return
+    get_client().table('bg_tournament_visibility').upsert(
+        {'tournament_id': tournament_id, 'user_id': user_id},
+        on_conflict='tournament_id,user_id').execute()
+
+
 def move_stage_data(source_stage_id: str, target_stage_id: str, target_event_id: str):
     """Move boards and results from source stage to target stage, then clean up source."""
     c = get_client()

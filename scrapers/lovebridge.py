@@ -933,6 +933,7 @@ def scrape(url_or_id, dry_run=False, name=None):
             _scrape_stage(sm, seg_session_ids, tournament_id, event_id, dry_run)
 
     print(f'\nDone! Tournament: {tournament_data["name"]}')
+    return tournament_id
 
 
 # ── CLI ───────────────────────────────────────────────────────────

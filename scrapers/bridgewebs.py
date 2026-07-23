@@ -26,6 +26,7 @@ from db import (
     upsert_tournament, upsert_event, upsert_stage,
     insert_participants, find_participants, insert_boards,
     insert_board_results, stage_exists, update_board_dd,
+    find_tournament_by_stage_url,
 )
 
 _ssl_ctx = ssl.create_default_context()
@@ -621,7 +622,7 @@ def scrape(url, dry_run=False, name=None):
 
     if not dry_run and stage_exists(source_url):
         print('  Already scraped. Skipping.')
-        return
+        return find_tournament_by_stage_url(source_url)
 
     # ── Fetch data for this single session ──
     xml_text = fetch_travs_xml(club, event)
@@ -747,6 +748,7 @@ def scrape(url, dry_run=False, name=None):
         print(f'  Errors ({len(errors)}):')
         for e in errors[:10]:
             print(f'    {e}')
+    return tournament_id
 
 
 def _event_date(event_key):
