@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { openHandviewer, linHasPlay } from './linExport.js';
+import { openHandviewer, linHasPlay, linHasBidding, buildReplayLin } from './linExport.js';
 
 const SUIT_SYM = { S: '♠', H: '♥', D: '♦', C: '♣' };
 const SUIT_CLR = { S: '#000', H: '#c62828', D: '#c62828', C: '#2e7d32' };
@@ -55,6 +55,12 @@ export default function HandDiagram({ board, result, otherRoom, participantMap, 
 
   const nsBest = bestContracts(board, 'ns');
   const ewBest = bestContracts(board, 'ew');
+
+  // Real record when it has play or bidding; otherwise a synthetic replay
+  // (deal + contract + lead) so the hand can always be walked through.
+  const replayLin = (linHasPlay(result?.lin) || linHasBidding(result?.lin))
+    ? result.lin
+    : buildReplayLin(board, result);
 
   // IMP calculation
   let boardImps = null;
@@ -135,8 +141,8 @@ export default function HandDiagram({ board, result, otherRoom, participantMap, 
   const buttonsBlock = (
     <div style={{ display: 'flex', gap: 4, marginTop: 3 }}>
       {hasDDData(board) && <DDSPopup board={board} />}
-      {linHasPlay(result?.lin) && (
-        <button onClick={() => openHandviewer(result.lin)}
+      {replayLin && (
+        <button onClick={() => openHandviewer(replayLin)}
           style={{ fontSize: '0.65rem', padding: '2px 6px', background: '#059669', color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer' }}>
           Open
         </button>
@@ -223,8 +229,8 @@ export default function HandDiagram({ board, result, otherRoom, participantMap, 
         {/* Buttons */}
         <div style={{ display: 'flex', gap: 4, marginTop: 3 }}>
           {hasDDData(board) && <DDSPopup board={board} />}
-          {linHasPlay(result?.lin) && (
-            <button onClick={() => openHandviewer(result.lin)} style={{ fontSize: '0.65rem', padding: '2px 5px', background: '#059669', color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer' }}>Open</button>
+          {replayLin && (
+            <button onClick={() => openHandviewer(replayLin)} style={{ fontSize: '0.65rem', padding: '2px 5px', background: '#059669', color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer' }}>Open</button>
           )}
           {onTraveller && (
             <button onClick={onTraveller} style={{ fontSize: '0.65rem', padding: '2px 5px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer' }}>Traveller</button>

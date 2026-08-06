@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase as defaultSupabase } from './supabase.js';
 import HandDiagram, { BiddingTable, parseBiddingFromLin } from './HandDiagram.jsx';
-import { openHandviewer, linHasBidding, linHasPlay } from './linExport.js';
+import { openHandviewer, linHasBidding, linHasPlay, buildReplayLin } from './linExport.js';
 
 export default function AnalysisView({ supabase: sbProp, analysis, userId, onBack, onDisplayRows, DiscussionView }) {
   const supabase = sbProp || defaultSupabase;
@@ -1000,6 +1000,7 @@ function TravellerPopup({ popup, board, result, otherRoom, boardResults, partici
 
   const popupContent = popup === 'traveller' ? (
     <TravellerTable
+      board={board}
       boardResults={boardResults}
       participantMap={participantMap}
       highlightParticipantId={highlightParticipantId}
@@ -1078,7 +1079,7 @@ function isGameContract(level, denom) {
   return pts >= 100;
 }
 
-function TravellerTable({ boardResults, participantMap, highlightParticipantId, isTeams }) {
+function TravellerTable({ board, boardResults, participantMap, highlightParticipantId, isTeams }) {
   const [sortKey, setSortKey] = useState('ns');
   const [sortAsc, setSortAsc] = useState(true);
   const [expandedIdx, setExpandedIdx] = useState(null);
@@ -1194,14 +1195,17 @@ function TravellerTable({ boardResults, participantMap, highlightParticipantId, 
                   : <td className="py-1 px-1.5 text-right">{pct != null && <PctBadge pct={pct} />}</td>
                 }
                 <td className="py-1 px-1.5 text-center">
-                  {(linHasPlay(r.lin) || linHasBidding(r.lin)) && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); openHandviewer(r.lin); }}
-                      className="px-1.5 py-0.5 rounded text-xs bg-emerald-600 text-white hover:bg-emerald-700"
-                    >
-                      Open
-                    </button>
-                  )}
+                  {(() => {
+                    const lin = (linHasPlay(r.lin) || linHasBidding(r.lin)) ? r.lin : buildReplayLin(board, r);
+                    return lin && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); openHandviewer(lin); }}
+                        className="px-1.5 py-0.5 rounded text-xs bg-emerald-600 text-white hover:bg-emerald-700"
+                      >
+                        Open
+                      </button>
+                    );
+                  })()}
                 </td>
               </tr>
               {isExpanded && (

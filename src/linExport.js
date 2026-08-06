@@ -1,7 +1,7 @@
 const DEALER_TO_LIN = { N: '3', E: '4', S: '1', W: '2' };
 const VUL_TO_LIN = { none: 'o', ns: 'n', ew: 'e', both: 'b', NS: 'n', EW: 'e' };
 
-function boardToLin(board, boardNumber) {
+function dealPrefix(board, boardNumber) {
   const dealer = DEALER_TO_LIN[board.dealer] || '3';
   const vul = VUL_TO_LIN[board.vulnerability] || 'o';
   const hands = ['s', 'w', 'n', 'e'].map(d => {
@@ -11,7 +11,51 @@ function boardToLin(board, boardNumber) {
     const c = (board[`${d}_clubs`] || '').replace(/10/g, 'T');
     return `S${sp}H${h}D${dm}C${c}`;
   }).join(',');
-  return `qx|o${boardNumber}|md|${dealer}${hands}|rh||ah|Board ${boardNumber}|sv|${vul}|pg||`;
+  return `qx|o${boardNumber}|md|${dealer}${hands}|rh||ah|Board ${boardNumber}|sv|${vul}|`;
+}
+
+function boardToLin(board, boardNumber) {
+  return dealPrefix(board, boardNumber) + 'pg||';
+}
+
+function boardHasCards(board) {
+  return !!board && ['n', 's', 'e', 'w'].every(d =>
+    /[AKQJT2-9]/.test(
+      `${board[`${d}_spades`] || ''}${board[`${d}_hearts`] || ''}${board[`${d}_diamonds`] || ''}${board[`${d}_clubs`] || ''}`
+    )
+  );
+}
+
+// Rows without stored bidding/play can still be walked through in the
+// handviewer: synthesize an auction that arrives at the actual contract
+// with the correct declarer (passes → bid → dbl/rdbl → passes), then
+// play the known opening lead. The handviewer lets the user play out
+// the remaining cards from there.
+export function buildReplayLin(board, result) {
+  if (!boardHasCards(board)) return null;
+  const boardNumber = board.board_number || '';
+  let lin = dealPrefix(board, boardNumber);
+
+  const seats = ['N', 'E', 'S', 'W'];
+  const dealerIdx = Math.max(0, seats.indexOf(board.dealer));
+  const declarerIdx = seats.indexOf(result?.declarer);
+  if (result?.passed_out || !result?.contract_level || !result?.contract_denom || declarerIdx < 0) {
+    return lin + 'pg||'; // no contract to replay — show the deal
+  }
+
+  const calls = [];
+  for (let i = (declarerIdx - dealerIdx + 4) % 4; i > 0; i--) calls.push('p');
+  calls.push(`${result.contract_level}${result.contract_denom === 'NT' ? 'N' : result.contract_denom}`);
+  const x = (result.contract_x || '').toLowerCase();
+  if (x.includes('x')) calls.push('d');
+  if (x.includes('xx')) calls.push('r');
+  calls.push('p', 'p', 'p');
+  lin += calls.map(c => `mb|${c}|`).join('');
+
+  if (result.lead_suit && result.lead_rank) {
+    lin += `pc|${result.lead_suit}${String(result.lead_rank).replace('10', 'T')}|`;
+  }
+  return lin + 'pg||';
 }
 
 // What a stored LIN actually contains — some sources (e.g. BridgeWebs)
