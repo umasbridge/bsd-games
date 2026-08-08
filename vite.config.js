@@ -144,7 +144,9 @@ function scrapePlugin() {
                 res.statusCode = 500;
                 res.end(JSON.stringify({ error: stderr || err.message, stdout }));
               } else {
-                res.end(JSON.stringify({ success: true, stdout }));
+                const tidMatch = stdout.match(/^TOURNAMENT_ID:(.+)$/m);
+                const tournament_id = tidMatch ? tidMatch[1].trim() : null;
+                res.end(JSON.stringify({ success: true, stdout, tournament_id }));
               }
             });
           } catch (e) {

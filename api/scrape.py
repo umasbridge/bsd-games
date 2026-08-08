@@ -36,7 +36,7 @@ class handler(BaseHTTPRequestHandler):
             if tournament_id and user_id:
                 from db import grant_tournament_access
                 grant_tournament_access(tournament_id, user_id)
-            self._json(200, {'success': True})
+            self._json(200, {'success': True, 'tournament_id': tournament_id})
 
         except ValueError as e:
             self._json(400, {'error': str(e)})

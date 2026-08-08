@@ -496,9 +496,10 @@ def import_session(sess, username, source_url, dry_run=False, travellers=True, n
     stage_url = f'{BASE}/myhands/hands.php#bbo-{sess["key"]}'
     if not dry_run and stage_exists(stage_url):
         print(f'  Already imported: {sess["label"]}. Skipping.')
+        existing_tid = find_tournament_by_stage_url(stage_url)
         if user_id:
-            grant_tournament_access(find_tournament_by_stage_url(stage_url), user_id)
-        return
+            grant_tournament_access(existing_tid, user_id)
+        return existing_tid
 
     # Fetch travellers: every table's result (with LIN) for each board
     trav_rows = {}  # hand index -> traveller rows
@@ -663,6 +664,8 @@ def import_session(sess, username, source_url, dry_run=False, travellers=True, n
         print(f'    Warning: {w}')
     if len(warnings) > 10:
         print(f'    ... and {len(warnings) - 10} more warnings')
+
+    return tournament_id
 
 
 # ── CLI ───────────────────────────────────────────────────────────

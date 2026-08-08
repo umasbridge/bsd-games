@@ -49,16 +49,20 @@ class handler(BaseHTTPRequestHandler):
                     self._json(400, {'error': 'keys is required for import'})
                     return
                 by_key = {s['key']: s for s in sessions}
-                imported, missing = [], []
+                imported, missing, tournament_ids = [], [], []
                 for key in keys:
                     sess = by_key.get(key)
                     if not sess:
                         missing.append(key)
                         continue
-                    import_session(sess, username, url, name=names.get(key),
-                                   user_id=data.get('user_id'))
+                    tid = import_session(sess, username, url, name=names.get(key),
+                                         user_id=data.get('user_id'))
                     imported.append(names.get(key) or sess['label'])
-                result = {'success': True, 'imported': imported}
+                    if tid:
+                        tournament_ids.append(tid)
+                result = {'success': True, 'imported': imported,
+                          'tournament_ids': tournament_ids,
+                          'tournament_id': tournament_ids[0] if tournament_ids else None}
                 if missing:
                     result['missing'] = missing
                 self._json(200, result)

@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabase.js';
-import AnalysisList, { CreateDealSetPicker } from './AnalysisList.jsx';
+import AnalysisList from './AnalysisList.jsx';
 import RetrieveDeals from './RetrieveDeals.jsx';
-import OpenConfig from './OpenConfig.jsx';
 import AnalysisView from './AnalysisView.jsx';
 
 export default function App() {
@@ -10,7 +9,6 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState('list');
   const [activeAnalysis, setActiveAnalysis] = useState(null);
-  const [selectedStages, setSelectedStages] = useState(null);
   const displayRowsCache = useRef({});
 
   useEffect(() => {
@@ -26,44 +24,12 @@ export default function App() {
 
   if (loading) return null;
 
-  if (view === 'create') {
-    return (
-      <CreateDealSetPicker
-        onBack={() => setView('list')}
-        onRetrieve={() => setView('retrieve')}
-        onRetrieveBbo={() => setView('retrieve-bbo')}
-        onCreateFromSelection={(stages) => {
-          setSelectedStages(stages);
-          setView('open-config');
-        }}
-      />
-    );
-  }
-
-  if (view === 'retrieve' || view === 'retrieve-bbo') {
+  if (view === 'retrieve-played') {
     return (
       <RetrieveDeals
-        mode={view === 'retrieve-bbo' ? 'bbo' : 'url'}
-        onBack={() => setView('create')}
-        onRetrieved={() => setView('create')}
-      />
-    );
-  }
-
-  if (view === 'open-config') {
-    return (
-      <OpenConfig
         userId={userId}
-        selectedStages={selectedStages}
-        onBack={() => {
-          setSelectedStages(null);
-          setView('create');
-        }}
-        onProceed={() => {
-          setSelectedStages(null);
-          setActiveAnalysis(null);
-          setView('list');
-        }}
+        onBack={() => setView('list')}
+        onRetrieved={() => setView('list')}
       />
     );
   }
@@ -83,7 +49,7 @@ export default function App() {
     <AnalysisList
       userId={userId}
       isAdmin={true}
-      onCreateNew={() => setView('create')}
+      onCreateNew={() => setView('retrieve-played')}
       onOpen={(analysis) => {
         setActiveAnalysis(analysis);
         setView('view');

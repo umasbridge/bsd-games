@@ -43,14 +43,14 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
   return (
     <div className="min-h-screen bg-gray-100">
       {Header ? (
-        <Header title="My Deal Sets" userEmail={userEmail} onLogout={onLogout} onBack={handleBack} />
+        <Header title="My played deals" userEmail={userEmail} onLogout={onLogout} onBack={handleBack} />
       ) : (
         <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <button onClick={handleBack} className="px-2 py-1 text-sm border border-gray-300 rounded hover:bg-gray-50">
               &larr; Dashboard
             </button>
-            <h1 className="text-lg font-bold">My Deal Sets</h1>
+            <h1 className="text-lg font-bold">My played deals</h1>
           </div>
         </div>
       )}
@@ -61,14 +61,14 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
             onClick={onCreateNew}
             className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
           >
-            Create New Deal Set
+            Retrieve played hands
           </button>
         </div>
         {loading ? (
           <p className="text-gray-400 py-8 text-center">Loading...</p>
         ) : analyses.length === 0 ? (
           <div className="bg-white border border-gray-200 rounded-lg p-8 text-center text-gray-400">
-            No deal sets yet. Click "Create New Deal Set" to get started.
+            No played deals yet. Click "Retrieve played hands" to get started.
           </div>
         ) : (
           <div className="space-y-2">

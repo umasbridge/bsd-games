@@ -917,7 +917,9 @@ def main():
         if args.discover:
             discover_club(args.url)
         else:
-            scrape(args.url, dry_run=args.dry_run)
+            tid = scrape(args.url, dry_run=args.dry_run)
+            if tid and not args.dry_run:
+                print(f'TOURNAMENT_ID:{tid}')
     except ValueError as e:
         print(f'ERROR: {e}', file=sys.stderr)
         sys.exit(1)

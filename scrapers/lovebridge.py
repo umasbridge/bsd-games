@@ -950,7 +950,9 @@ def main():
     args = parser.parse_args()
 
     try:
-        scrape(args.url, dry_run=args.dry_run, name=args.name)
+        tid = scrape(args.url, dry_run=args.dry_run, name=args.name)
+        if tid and not args.dry_run:
+            print(f'TOURNAMENT_ID:{tid}')
     except ValueError as e:
         print(f'ERROR: {e}', file=sys.stderr)
         sys.exit(1)
