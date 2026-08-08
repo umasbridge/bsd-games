@@ -64,6 +64,15 @@ def parse_bridgewebs_url(url):
 
 # ── HTTP fetching ─────────────────────────────────────────────────
 
+def _decode(raw):
+    """BridgeWebs serves pages as Windows-1252, not UTF-8 (e.g. curly quotes
+    show up as byte 0x93). Try UTF-8 first, fall back to cp1252."""
+    try:
+        return raw.decode('utf-8')
+    except UnicodeDecodeError:
+        return raw.decode('cp1252', errors='replace')
+
+
 def fetch_xml(club, event, pid):
     """Fetch XML data from BridgeWebs API."""
     url = (f'https://www.bridgewebs.com/cgi-bin/bwor/bw.cgi?xml=1'
@@ -73,7 +82,7 @@ def fetch_xml(club, event, pid):
         'Accept': '*/*',
     })
     with urllib.request.urlopen(req, context=_ssl_ctx) as resp:
-        return resp.read().decode('utf-8')
+        return _decode(resp.read())
 
 
 def fetch_rank_xml(club, event):
@@ -120,7 +129,7 @@ def fetch_event_title(club, event):
         'Accept': '*/*',
     })
     with urllib.request.urlopen(req, context=_ssl_ctx) as resp:
-        html = resp.read().decode('utf-8')
+        html = _decode(resp.read())
 
     result_title = None
     club_name = None
