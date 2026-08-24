@@ -428,15 +428,15 @@ def _parse_session_data(board_pages, stage_id, player_data, participant_map, sco
     board_rows = []
     result_rows = []
     errors = []
+    seq_num = 0  # sequential 1-based board number; avoids BridgeWebs multi-session collisions
 
     for page in board_pages:
         try:
-            bn = int(page.get('bd', '0'))
-            if bn == 0:
+            orig_bn = int(page.get('bd', '0'))
+            if orig_bn == 0:
                 continue
-            sess_num = int(page.get('sess', '1') or '1')
-            if sess_num > 1:
-                bn += (sess_num - 1) * 1000
+            seq_num += 1
+            bn = seq_num
 
             dealer = DEALER_MAP_BW.get(page.get('dlr', '1'), 'N')
             vul = VUL_MAP_BW.get(page.get('vul', '1'), 'none')
