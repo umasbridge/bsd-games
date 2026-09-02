@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { execFile } from 'child_process'
 import path from 'path'
+import fs from 'fs'
 
 function scrapePlugin() {
   return {
@@ -26,7 +27,7 @@ function scrapePlugin() {
               res.end(JSON.stringify({ error: 'url is required' }));
               return;
             }
-            const projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname));
+            const projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../games-retrieval');
             const discoverPath = path.resolve(projectRoot, 'scrapers/discover.py');
             const env = {
               ...process.env,
@@ -76,7 +77,7 @@ function scrapePlugin() {
               res.end(JSON.stringify({ error: 'url and mappings are required' }));
               return;
             }
-            const projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname));
+            const projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../games-retrieval');
             const scriptPath = path.resolve(projectRoot, 'scrapers/scrape_to_stage.py');
             const env = {
               ...process.env,
@@ -122,7 +123,7 @@ function scrapePlugin() {
               return;
             }
 
-            const projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname));
+            const projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../games-retrieval');
             let scraperFile = 'scrapers/srini.py';
             if (url.includes('lovebridge.com')) scraperFile = 'scrapers/lovebridge.py';
             else if (url.includes('bridgewebs.com')) scraperFile = 'scrapers/bridgewebs.py';
@@ -162,7 +163,25 @@ function scrapePlugin() {
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), scrapePlugin()],
+  resolve: {
+    alias: {
+      ...(fs.existsSync(path.resolve('../ips')) ? { 'ips': path.resolve('../ips') } : {}),
+      ...(fs.existsSync(path.resolve('../games-retrieval')) ? { 'games-retrieval': path.resolve('../games-retrieval') } : {}),
+      react: path.resolve('./node_modules/react'),
+      'react-dom': path.resolve('./node_modules/react-dom'),
+    },
+  },
   server: {
     port: 5174,
+    proxy: {
+      '/bridge-problems': {
+        target: 'http://localhost:5173',
+        changeOrigin: true,
+      },
+      '/bridge-lib': {
+        target: 'http://localhost:5173',
+        changeOrigin: true,
+      },
+    },
   },
 })

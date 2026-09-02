@@ -29,6 +29,7 @@ export default function NewAnalysis({ supabase: sbProp, userId, onBack, onCreate
   const [pctThreshold, setPctThreshold] = useState('40');
   const [saving, setSaving] = useState(false);
 
+
   const isTeams = event?.type === 'teams';
 
   useEffect(() => { loadTournaments(); }, []);

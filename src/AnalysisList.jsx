@@ -1,31 +1,74 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase as defaultSupabase } from './supabase.js';
 import { buildTeamRows, buildPairRows } from './AnalysisView.jsx';
-import { downloadLin } from './linExport.js';
+import { downloadLin, linHasPlay } from './linExport.js';
 
-export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAdmin, onNew, onRetrieve, onOpen, onCreateNew, onLogout, onBack, Header, displayRowsCache, ShareDialog }) {
+export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAdmin, onNew, onRetrieve, onOpen, onCreateNew, onLogout, onBack, Header, ShareDialog, onPlay }) {
   const sb = sbProp || defaultSupabase;
   const [analyses, setAnalyses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [sharingAnalysis, setSharingAnalysis] = useState(null);
   const [downloading, setDownloading] = useState(null);
+  const [pendingAnalysis, setPendingAnalysis] = useState(null);
+  const [showSmartQuery, setShowSmartQuery] = useState(false);
+  const [playableByAnalysis, setPlayableByAnalysis] = useState({});
+
+  const analysisHasPlayableBoard = async (analysis) => {
+    const filters = analysis.filters || {};
+    let query = sb
+      .from('bg_board_results')
+      .select('lin')
+      .not('lin', 'is', null)
+      .ilike('lin', '%pc|%')
+      .limit(1000);
+
+    if (filters.board_ids?.length) {
+      query = query.in('board_id', filters.board_ids);
+    } else {
+      let stageIds = filters.stage_ids || (filters.stage_id ? [filters.stage_id] : []);
+      if (!stageIds.length && analysis.bg_events?.id) {
+        const { data: stages } = await sb
+          .from('bg_stages')
+          .select('id')
+          .eq('event_id', analysis.bg_events.id);
+        stageIds = (stages || []).map(stage => stage.id);
+      }
+      if (!stageIds.length) return false;
+      query = query.in('stage_id', stageIds);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      console.error('Playability check failed:', analysis.id, error);
+      return false;
+    }
+    return (data || []).some(result => linHasPlay(result.lin));
+  };
 
   const fetchAnalyses = async () => {
-    const { data: { session } } = await sb.auth.getSession();
-    console.log('Auth session:', session?.user?.id, session?.user?.email);
-
-    const { data, error } = await sb
-      .from('bsd_game_analyses')
-      .select(`
-        id, name, filters, created_at, updated_at, user_id, participant_id,
-        bg_events ( id, name, type, scoring,
-          bg_tournaments ( id, name, date_start, location, source_format )
-        )
-      `)
-      .order('updated_at', { ascending: false });
-    console.log('Analyses fetched:', data?.length, 'error:', error);
-    setAnalyses(data || []);
-    setLoading(false);
+    try {
+      const { data, error } = await sb
+        .from('bsd_game_analyses')
+        .select(`
+          id, name, filters, created_at, updated_at, user_id, participant_id,
+          bg_events ( id, name, type, scoring,
+            bg_tournaments ( id, name, date_start, location, source_format )
+          )
+        `)
+        .order('updated_at', { ascending: false });
+      if (error) console.error('Analyses fetch error:', error);
+      const loaded = data || [];
+      setAnalyses(loaded);
+      const checks = await Promise.all(loaded.map(async analysis => [
+        analysis.id,
+        await analysisHasPlayableBoard(analysis),
+      ]));
+      setPlayableByAnalysis(Object.fromEntries(checks));
+    } catch (e) {
+      console.error('fetchAnalyses error:', e);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => { fetchAnalyses(); }, []);
@@ -52,6 +95,12 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
             </button>
             <h1 className="text-lg font-bold">My played deals</h1>
           </div>
+          <button
+            onClick={() => setShowSmartQuery(true)}
+            className="px-3 py-1.5 border border-gray-300 rounded text-sm text-blue-700 hover:bg-blue-50"
+          >
+            Smart Query
+          </button>
         </div>
       )}
 
@@ -92,8 +141,16 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
                       onClick={() => onOpen(a)}
                       className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
                     >
-                      Open
+                      View
                     </button>
+                    {playableByAnalysis[a.id] && (
+                      <button
+                        onClick={() => setPendingAnalysis(a)}
+                        className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700"
+                      >
+                        Play
+                      </button>
+                    )}
                     {owner && (
                       <>
                         <button
@@ -130,6 +187,16 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
         )}
       </div>
 
+      {pendingAnalysis && (
+        <DirectionPickerDialog
+          onPick={({ direction, cardingNS, cardingEW }) => {
+            onPlay({ name: pendingAnalysis.name, analysis: pendingAnalysis, direction, cardingNS, cardingEW });
+            setPendingAnalysis(null);
+          }}
+          onClose={() => setPendingAnalysis(null)}
+        />
+      )}
+
       {sharingAnalysis && (ShareDialog ? (
         <ShareDialog
           analysis={sharingAnalysis}
@@ -145,6 +212,75 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
           onClose={() => setSharingAnalysis(null)}
         />
       ))}
+
+      {showSmartQuery && (
+        <SmartQueryDialog
+          supabase={sb}
+          userId={userId}
+          onClose={() => setShowSmartQuery(false)}
+          onCreated={(newAnalysis) => {
+            setAnalyses(prev => [newAnalysis, ...prev]);
+            setShowSmartQuery(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+
+function DirectionPickerDialog({ onPick, onClose }) {
+  const [sel, setSel] = useState(null);
+  const [cns, setCns] = useState('UDCA');
+  const [cew, setCew] = useState('UDCA');
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="bg-white rounded-lg shadow-lg w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+        <h2 className="text-base font-bold mb-3">Which direction would you like to play?</h2>
+        <div className="flex gap-2 mb-4">
+          {['N', 'S', 'E', 'W'].map(d => (
+            <button
+              key={d}
+              onClick={() => setSel(d)}
+              style={{
+                minWidth: 44, padding: '4px 10px', borderRadius: 6, fontWeight: 700, fontSize: '0.9rem', cursor: 'pointer',
+                border: sel === d ? '2px solid #2563eb' : '1px solid #d1d5db',
+                background: sel === d ? '#2563eb' : '#fff',
+                color: sel === d ? '#fff' : '#374151',
+              }}
+            >{d}</button>
+          ))}
+        </div>
+        <div className="flex gap-4 mb-5 text-sm text-gray-500">
+          <label className="flex flex-col gap-1">
+            NS carding
+            <select value={cns} onChange={e => setCns(e.target.value)} className="px-2 py-1 border border-gray-300 rounded text-sm">
+              <option value="UDCA">UDCA</option>
+              <option value="STD">Standard</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            EW carding
+            <select value={cew} onChange={e => setCew(e.target.value)} className="px-2 py-1 border border-gray-300 rounded text-sm">
+              <option value="UDCA">UDCA</option>
+              <option value="STD">Standard</option>
+            </select>
+          </label>
+        </div>
+        <div className="flex gap-2 justify-end">
+          <button onClick={onClose} className="px-4 py-2 border border-gray-300 rounded text-sm hover:bg-gray-50">
+            Cancel
+          </button>
+          <button
+            disabled={!sel}
+            onClick={() => onPick({ direction: sel, cardingNS: cns, cardingEW: cew })}
+            className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-40 disabled:cursor-default"
+          >
+            Play →
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -613,6 +749,234 @@ function TournamentRow({ tournament, expanded, onToggle, onStageToggle, onTourna
           {stg.scraped && <span className="text-xs text-gray-400">{stg.boardCount} boards</span>}
         </label>
       ))}
+    </div>
+  );
+}
+
+
+const IMP_TABLE = [
+  [0,10,0],[20,40,1],[50,80,2],[90,120,3],[130,160,4],[170,210,5],
+  [220,260,6],[270,310,7],[320,360,8],[370,420,9],[430,490,10],
+  [500,590,11],[600,740,12],[750,890,13],[900,1090,14],[1100,1290,15],
+  [1300,1490,16],[1500,1740,17],[1750,1990,18],[2000,2240,19],
+  [2250,2490,20],[2500,2990,21],[3000,3490,22],[3500,3990,23],[4000,Infinity,24],
+];
+
+function scoreToImpsAbs(netScore) {
+  const abs = Math.abs(netScore);
+  for (const [lo, hi, imp] of IMP_TABLE) {
+    if (abs >= lo && abs <= hi) return imp;
+  }
+  return 24;
+}
+
+
+function SmartQueryDialog({ supabase, userId, onClose, onCreated }) {
+  const [phase, setPhase] = useState('idle'); // idle | searching | done | creating | error
+  const [matchedBoardIds, setMatchedBoardIds] = useState([]);
+  const [matchedEventIds, setMatchedEventIds] = useState([]);
+  const [primaryEventId, setPrimaryEventId] = useState(null);
+  const [name, setName] = useState('Teams: 6+ IMP swing at game level');
+  const [error, setError] = useState('');
+
+  const handleSearch = async () => {
+    setPhase('searching');
+    setError('');
+    try {
+      // Visible tournaments for this user
+      const { data: vis } = await supabase
+        .from('bg_tournament_visibility')
+        .select('tournament_id')
+        .eq('user_id', userId);
+      const tournamentIds = (vis || []).map(v => v.tournament_id);
+      if (!tournamentIds.length) { setMatchedBoardIds([]); setPhase('done'); return; }
+
+      // Teams events in those tournaments
+      const { data: eventsData } = await supabase
+        .from('bg_events')
+        .select('id')
+        .in('tournament_id', tournamentIds)
+        .eq('type', 'teams');
+      const eventIds = (eventsData || []).map(e => e.id);
+      if (!eventIds.length) { setMatchedBoardIds([]); setPhase('done'); return; }
+
+      // Stages for those events
+      const { data: stagesData } = await supabase
+        .from('bg_stages')
+        .select('id, event_id')
+        .in('event_id', eventIds);
+      const stageIds = (stagesData || []).map(s => s.id);
+      const stageEventMap = {};
+      for (const s of (stagesData || [])) stageEventMap[s.id] = s.event_id;
+      if (!stageIds.length) { setMatchedBoardIds([]); setPhase('done'); return; }
+
+      // Board results: has bidding (lin contains mb|), game-level contract, part of a match
+      const allResults = [];
+      let from = 0;
+      while (true) {
+        const { data } = await supabase
+          .from('bg_board_results')
+          .select('board_id, stage_id, room, match_id, round, contract_level, imps_ns, score')
+          .in('stage_id', stageIds)
+          .like('lin', '%mb|%')
+          .gte('contract_level', 4)
+          .not('match_id', 'is', null)
+          .order('id')
+          .range(from, from + 999);
+        if (!data?.length) break;
+        allResults.push(...data);
+        if (data.length < 1000) break;
+        from += 1000;
+      }
+
+      // Group into open+closed pairs by board_id + match_id
+      const pairs = {};
+      for (const r of allResults) {
+        const key = `${r.board_id}__${r.match_id}__${r.round ?? ''}`;
+        if (!pairs[key]) pairs[key] = {};
+        if (r.room === 'open') pairs[key].open = r;
+        else if (r.room === 'closed') pairs[key].closed = r;
+      }
+
+      // Filter: both rooms present + IMP swing >= 6
+      const qualifyingBoardIds = new Set();
+      const qualifyingEventIds = new Set();
+      const eventHits = {};
+
+      for (const { open, closed } of Object.values(pairs)) {
+        if (!open || !closed) continue;
+
+        // IMP swing: stored imps_ns preferred, fall back to score-based
+        const maxImpNs = Math.max(Math.abs(open.imps_ns || 0), Math.abs(closed.imps_ns || 0));
+        const swing = maxImpNs > 0
+          ? maxImpNs
+          : scoreToImpsAbs(Math.abs((open.score || 0) + (closed.score || 0)));
+
+        if (swing >= 6) {
+          qualifyingBoardIds.add(open.board_id);
+          const evtId = stageEventMap[open.stage_id];
+          if (evtId) {
+            qualifyingEventIds.add(evtId);
+            eventHits[evtId] = (eventHits[evtId] || 0) + 1;
+          }
+        }
+      }
+
+      const boardIds = [...qualifyingBoardIds];
+      const evtIdsList = [...qualifyingEventIds];
+      setMatchedBoardIds(boardIds);
+      setMatchedEventIds(evtIdsList);
+
+      const primaryEvt = Object.entries(eventHits).sort((a, b) => b[1] - a[1])[0]?.[0] || evtIdsList[0] || null;
+      setPrimaryEventId(primaryEvt);
+      setPhase('done');
+    } catch (e) {
+      setError(e.message);
+      setPhase('error');
+    }
+  };
+
+  const handleCreate = async () => {
+    if (!name.trim() || !primaryEventId) return;
+    setPhase('creating');
+    setError('');
+
+    const filters = {
+      mode: 'board_ids',
+      board_ids: matchedBoardIds,
+      event_ids: matchedEventIds,
+      query_label: 'Teams · 6+ IMP swing · game level · bidding',
+    };
+
+    const { data, error: dbErr } = await supabase
+      .from('bsd_game_analyses')
+      .insert({ user_id: userId, name: name.trim(), event_id: primaryEventId, filters })
+      .select(`
+        id, name, filters, created_at, updated_at, user_id, participant_id,
+        bg_events ( id, name, type, scoring,
+          bg_tournaments ( id, name, date_start, location, source_format )
+        )
+      `)
+      .single();
+
+    if (dbErr) { setError(dbErr.message); setPhase('done'); return; }
+    onCreated(data);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+        <h2 className="text-base font-bold mb-1">Smart Query — Teams Bidding Boards</h2>
+        <p className="text-sm text-gray-500 mb-4">
+          Find boards from your teams events where bidding is recorded, the IMP swing is ≥ 6, and both tables reached game (4-level or higher).
+        </p>
+
+        {phase === 'idle' && (
+          <button onClick={handleSearch} className="w-full px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">
+            Search
+          </button>
+        )}
+
+        {phase === 'searching' && (
+          <div className="text-center py-4">
+            <div className="inline-block animate-spin w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full mb-2" />
+            <p className="text-sm text-gray-500">Searching across your teams events...</p>
+          </div>
+        )}
+
+        {(phase === 'done' || phase === 'creating') && (
+          <div className="space-y-4">
+            <div className="bg-gray-50 rounded px-3 py-2 text-sm text-gray-700">
+              {matchedBoardIds.length === 0
+                ? 'No boards found matching these criteria in your library.'
+                : <><span className="font-bold">{matchedBoardIds.length}</span> boards found</>
+              }
+            </div>
+            {matchedBoardIds.length > 0 && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Deal Set Name</label>
+                  <input
+                    type="text"
+                    value={name}
+                    onChange={e => setName(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                    autoFocus
+                  />
+                </div>
+                {error && <p className="text-red-500 text-xs">{error}</p>}
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleCreate}
+                    disabled={phase === 'creating' || !name.trim()}
+                    className="flex-1 px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {phase === 'creating' ? 'Creating...' : 'Create Deal Set'}
+                  </button>
+                  <button onClick={onClose} className="px-4 py-2 border border-gray-300 rounded text-sm hover:bg-gray-50">
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
+            {matchedBoardIds.length === 0 && (
+              <button onClick={onClose} className="w-full px-4 py-2 border border-gray-300 rounded text-sm hover:bg-gray-50">
+                Close
+              </button>
+            )}
+          </div>
+        )}
+
+        {phase === 'error' && (
+          <div className="space-y-3">
+            <p className="text-red-500 text-sm">{error}</p>
+            <div className="flex gap-2">
+              <button onClick={handleSearch} className="px-4 py-2 bg-blue-600 text-white rounded text-sm">Retry</button>
+              <button onClick={onClose} className="px-4 py-2 border border-gray-300 rounded text-sm">Cancel</button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

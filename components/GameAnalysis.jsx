@@ -1,32 +1,42 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import AnalysisList from '../src/AnalysisList.jsx';
-import RetrieveDeals from '../src/RetrieveDeals.jsx';
+import { RetrieveDeals } from 'games-retrieval';
 import AnalysisView from '../src/AnalysisView.jsx';
+import PlaySetView from '../src/PlaySetView.jsx';
 
 export default function GameAnalysis({ supabase, userId, userEmail, isAdmin, onLogout, onBack, Header, DiscussionView, ShareDialog, onDownloadLin }) {
-  const [view, setView] = useState('list');
-  const [activeAnalysis, setActiveAnalysis] = useState(null);
-  const displayRowsCache = useRef({});
+  const [route, setRoute] = useState({ name: 'list' });
 
-  if (view === 'retrieve-played') {
+  if (route.name === 'retrieve') {
     return (
       <RetrieveDeals
         supabase={supabase}
         userId={userId}
-        onBack={() => setView('list')}
-        onRetrieved={() => setView('list')}
+        onBack={() => setRoute({ name: 'list' })}
+        onRetrieved={() => setRoute({ name: 'list' })}
       />
     );
   }
 
-  if (view === 'view' && activeAnalysis) {
+  if (route.name === 'play' && route.playSet) {
+    return (
+      <PlaySetView
+        supabase={supabase}
+        playSet={route.playSet}
+        userId={userId}
+        onBack={() => setRoute({ name: 'list' })}
+        DiscussionView={DiscussionView}
+      />
+    );
+  }
+
+  if (route.name === 'view' && route.analysis) {
     return (
       <AnalysisView
         supabase={supabase}
-        analysis={activeAnalysis}
+        analysis={route.analysis}
         userId={userId}
-        onBack={() => { setActiveAnalysis(null); setView('list'); }}
-        onDisplayRows={(rows) => { displayRowsCache.current[activeAnalysis.id] = rows; }}
+        onBack={() => setRoute({ name: 'list' })}
         DiscussionView={DiscussionView}
       />
     );
@@ -38,15 +48,12 @@ export default function GameAnalysis({ supabase, userId, userEmail, isAdmin, onL
       userId={userId}
       userEmail={userEmail}
       isAdmin={isAdmin}
-      onCreateNew={() => setView('retrieve-played')}
-      onOpen={(analysis) => {
-        setActiveAnalysis(analysis);
-        setView('view');
-      }}
+      onCreateNew={() => setRoute({ name: 'retrieve' })}
+      onOpen={(analysis) => setRoute({ name: 'view', analysis })}
+      onPlay={(playSet) => setRoute({ name: 'play', playSet })}
       onLogout={onLogout}
       onBack={onBack}
       Header={Header}
-      displayRowsCache={displayRowsCache.current}
       onDownloadLin={onDownloadLin}
       ShareDialog={ShareDialog}
     />

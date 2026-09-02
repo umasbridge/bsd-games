@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from './supabase.js';
 import AnalysisList from './AnalysisList.jsx';
-import RetrieveDeals from './RetrieveDeals.jsx';
+import { RetrieveDeals } from 'games-retrieval';
 import AnalysisView from './AnalysisView.jsx';
 
 export default function App() {
@@ -9,7 +9,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState('list');
   const [activeAnalysis, setActiveAnalysis] = useState(null);
-  const displayRowsCache = useRef({});
+  const [activePlaySet, setActivePlaySet] = useState(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session: s } }) => {
@@ -27,6 +27,7 @@ export default function App() {
   if (view === 'retrieve-played') {
     return (
       <RetrieveDeals
+        supabase={supabase}
         userId={userId}
         onBack={() => setView('list')}
         onRetrieved={() => setView('list')}
@@ -39,11 +40,17 @@ export default function App() {
       <AnalysisView
         analysis={activeAnalysis}
         userId={userId}
-        onBack={() => { setActiveAnalysis(null); setView('list'); }}
-        onDisplayRows={(rows) => { displayRowsCache.current[activeAnalysis.id] = rows; }}
+        onBack={() => { setActiveAnalysis(null); setActivePlaySet(null); setView('list'); }}
+        playSet={activePlaySet}
       />
     );
   }
+
+  const handleOpenPlaySet = (ps) => {
+    setActiveAnalysis(ps.analysis);
+    setActivePlaySet(ps);
+    setView('view');
+  };
 
   return (
     <AnalysisList
@@ -52,9 +59,10 @@ export default function App() {
       onCreateNew={() => setView('retrieve-played')}
       onOpen={(analysis) => {
         setActiveAnalysis(analysis);
+        setActivePlaySet(null);
         setView('view');
       }}
-      displayRowsCache={displayRowsCache.current}
+      onOpenPlaySet={handleOpenPlaySet}
     />
   );
 }

@@ -1,13 +1,15 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase as defaultSupabase } from './supabase.js';
-import HandDiagram, { BiddingTable, parseBiddingFromLin } from './HandDiagram.jsx';
-import { openHandviewer, linHasBidding, linHasPlay, buildReplayLin } from './linExport.js';
+import { HandDiagram, BiddingTable, parseBiddingFromLin } from 'games-display';
+import { linHasBidding, linHasPlay } from './linExport.js';
 
-export default function AnalysisView({ supabase: sbProp, analysis, userId, onBack, onDisplayRows, DiscussionView }) {
+export default function AnalysisView({ supabase: sbProp, analysis, userId, onBack, DiscussionView }) {
   const supabase = sbProp || defaultSupabase;
   const [boards, setBoards] = useState([]);
   const [results, setResults] = useState([]);
   const [participants, setParticipants] = useState([]);
+  const [participantsLoaded, setParticipantsLoaded] = useState(false);
+  const participantsPromiseRef = useRef(null);
   const [loading, setLoading] = useState(true);
   const [notesUnread, setNotesUnread] = useState({});
 
@@ -15,9 +17,77 @@ export default function AnalysisView({ supabase: sbProp, analysis, userId, onBac
   const tournament = event?.bg_tournaments;
   const filters = analysis.filters || {};
   const isTeams = event?.type === 'teams';
+  const eventScoring = filters.event_scoring
+    || filters.selections?.find(selection => selection.event_id === event?.id)?.event_scoring
+    || filters.selections?.[0]?.event_scoring
+    || event?.scoring;
+  const participantEventIds = useMemo(() => {
+    if (filters.selections?.length) {
+      return [...new Set(filters.selections.map(selection => selection.event_id).filter(Boolean))];
+    }
+    if (filters.event_ids?.length) return filters.event_ids;
+    return event?.id ? [event.id] : [];
+  }, [filters.selections, filters.event_ids, event?.id]);
+
+  const ensureParticipants = () => {
+    if (participantsLoaded) return Promise.resolve(participants);
+    if (participantsPromiseRef.current) return participantsPromiseRef.current;
+    if (!participantEventIds.length) return Promise.resolve([]);
+
+    const query = participantEventIds.length === 1
+      ? supabase.from('bg_participants').select('id, number, name, roster').eq('event_id', participantEventIds[0]).order('number')
+      : supabase.from('bg_participants').select('id, number, name, roster').in('event_id', participantEventIds).order('number');
+
+    participantsPromiseRef.current = query.then(({ data }) => {
+      const loaded = data || [];
+      setParticipants(loaded);
+      setParticipantsLoaded(true);
+      participantsPromiseRef.current = null;
+      return loaded;
+    });
+    return participantsPromiseRef.current;
+  };
+
+  // Seat labels and team headings both depend on participant rosters, so load
+  // the lightweight participant map for every event up front.
+  useEffect(() => {
+    ensureParticipants();
+  }, [analysis?.id]);
 
   useEffect(() => {
     if (!event?.id) return;
+
+    // Board-IDs mode: cross-event smart query — load boards directly by ID
+    if (filters.board_ids?.length) {
+      const boardIds = filters.board_ids;
+      const fetchResultsForBoards = async () => {
+        const all = [];
+        let from = 0;
+        while (true) {
+          const { data } = await supabase
+            .from('bg_board_results')
+            .select('*')
+            .in('board_id', boardIds)
+            .order('id')
+            .range(from, from + 999);
+          if (!data?.length) break;
+          all.push(...data);
+          if (data.length < 1000) break;
+          from += 1000;
+        }
+        return { data: all };
+      };
+
+      Promise.all([
+        supabase.from('bg_boards').select('*').in('id', boardIds).order('board_number'),
+        fetchResultsForBoards(),
+      ]).then(([bRes, rRes]) => {
+        setBoards(bRes.data || []);
+        setResults(rRes.data || []);
+        setLoading(false);
+      });
+      return;
+    }
 
     // Resolve stage IDs: new multi-stage → old single stage → all event stages
     let stageQuery;
@@ -29,18 +99,9 @@ export default function AnalysisView({ supabase: sbProp, analysis, userId, onBac
       stageQuery = supabase.from('bg_stages').select('id').eq('event_id', event.id);
     }
 
-    // Resolve event IDs for participant loading
-    const eventIds = filters.selections?.length
-      ? [...new Set(filters.selections.map(s => s.event_id))]
-      : [event.id];
-
     stageQuery.then(({ data: stages }) => {
         const stageIds = (stages || []).map(s => s.id);
         if (!stageIds.length) { setLoading(false); return; }
-
-        const participantQuery = eventIds.length === 1
-          ? supabase.from('bg_participants').select('id, number, name, roster').eq('event_id', eventIds[0]).order('number')
-          : supabase.from('bg_participants').select('id, number, name, roster').in('event_id', eventIds).order('number');
 
         // Fetch all results, paginating to avoid Supabase 1000-row limit
         const fetchAllResults = async () => {
@@ -69,15 +130,13 @@ export default function AnalysisView({ supabase: sbProp, analysis, userId, onBac
             .in('stage_id', stageIds)
             .order('board_number'),
           fetchAllResults(),
-          participantQuery,
         ]);
       })
       .then((results) => {
         if (!results) return;
-        const [bRes, rRes, pRes] = results;
+        const [bRes, rRes] = results;
         setBoards(bRes.data || []);
         setResults(rRes.data || []);
-        setParticipants(pRes.data || []);
         setLoading(false);
       });
   }, [event?.id]);
@@ -118,20 +177,32 @@ export default function AnalysisView({ supabase: sbProp, analysis, userId, onBac
     return m;
   }, [results]);
 
-  // Build display rows: for teams, pair open+closed room; for pairs, individual results
-  const displayRows = useMemo(() => {
+  // Normalize source results once; presentation metadata is added below.
+  const normalizedRows = useMemo(() => {
     if (!boards.length || !results.length) return [];
 
     if (isTeams) {
-      return buildTeamRows(boards, results, filters, participantMap);
+      return buildTeamRows(boards, results, filters);
     } else {
       return buildPairRows(boards, results, filters);
     }
-  }, [boards, results, filters, isTeams, participantMap]);
+  }, [boards, results, filters, isTeams]);
 
-  useEffect(() => {
-    if (onDisplayRows && displayRows.length > 0) onDisplayRows(displayRows);
-  }, [displayRows]);
+  const displayBoards = useMemo(() => {
+    const matchKeySet = filters.match_keys?.length ? new Set(filters.match_keys) : null;
+    return normalizedRows.map(row => {
+      const allBoardResults = resultsByBoard[row.board?.id] || [];
+      const boardResults = matchKeySet
+        ? allBoardResults.filter(r => r.match_id
+          && matchKeySet.has(`${r.board_id}__${r.match_id}__${r.round ?? ''}`))
+        : allBoardResults;
+      return {
+        ...row,
+        boardNumber: row.displayBoardNumber ?? row.board?.board_number,
+        boardResults,
+      };
+    });
+  }, [normalizedRows, resultsByBoard, filters.match_keys]);
 
   if (loading) {
     return (
@@ -152,9 +223,11 @@ export default function AnalysisView({ supabase: sbProp, analysis, userId, onBac
         <div>
           <h1 className="text-sm font-bold">{analysis.name}</h1>
           <p className="text-xs text-gray-500">
-            {filters.stage_ids?.length > 1
-              ? `${filters.stage_ids.length} stages · ${displayRows.length} boards`
-              : `${tournament?.name} · ${displayRows.length} boards`
+            {filters.board_ids?.length > 0
+              ? `${filters.query_label || 'Smart query'} · ${displayBoards.length} boards`
+              : filters.stage_ids?.length > 1
+              ? `${filters.stage_ids.length} stages · ${displayBoards.length} boards`
+              : `${tournament?.name} · ${displayBoards.length} boards`
             }
           </p>
         </div>
@@ -162,18 +235,19 @@ export default function AnalysisView({ supabase: sbProp, analysis, userId, onBac
 
       {/* Board rows */}
       <div className="px-2 py-2">
-        {displayRows.length === 0 ? (
+        {displayBoards.length === 0 ? (
           <div className="p-8 text-center text-gray-400">
             No boards match the selected filters.
           </div>
         ) : (
-          displayRows.map((row, i) => (
-            <BoardRow
-              key={i}
-              row={row}
+          displayBoards.map(displayBoard => (
+            <BoardView
+              key={`${displayBoard.board?.id}:${displayBoard.result?.id}`}
+              displayBoard={displayBoard}
               isTeams={isTeams}
+              scoring={eventScoring}
               participantMap={participantMap}
-              boardResults={resultsByBoard[row.board?.id] || []}
+              ensureParticipants={ensureParticipants}
               highlightParticipantId={filters.participant_id}
               ourParticipantId={filters.participant_id}
               supabase={supabase}
@@ -182,8 +256,8 @@ export default function AnalysisView({ supabase: sbProp, analysis, userId, onBac
               analysisName={analysis.name}
               sharedWith={filters.shared_with}
               DiscussionView={DiscussionView}
-              notesUnread={notesUnread[row.board?.id] || 0}
-              onNotesRead={() => setNotesUnread(m => ({ ...m, [row.board?.id]: 0 }))}
+              notesUnread={notesUnread[displayBoard.board?.id] || 0}
+              onNotesRead={() => setNotesUnread(m => ({ ...m, [displayBoard.board?.id]: 0 }))}
             />
           ))
         )}
@@ -193,7 +267,7 @@ export default function AnalysisView({ supabase: sbProp, analysis, userId, onBac
 }
 
 
-export function buildTeamRows(boards, results, filters, participantMap) {
+export function buildTeamRows(boards, results, filters) {
   const boardMap = {};
   for (const b of boards) boardMap[b.id] = b;
 
@@ -211,6 +285,14 @@ export function buildTeamRows(boards, results, filters, participantMap) {
   }
 
   let pairs = Object.values(groups).filter(g => g.open && g.closed);
+
+  // Filter to specific match pairs when stored in filters (smart query / one-off deal sets)
+  if (filters.match_keys?.length) {
+    const keySet = new Set(filters.match_keys);
+    pairs = pairs.filter(({ open }) =>
+      keySet.has(`${open.board_id}__${open.match_id}__${open.round || ''}`)
+    );
+  }
 
   // Filter by team
   const pid = filters.participant_id;
@@ -278,14 +360,17 @@ export function buildTeamRows(boards, results, filters, participantMap) {
     });
   }
 
-  // Sort deterministically: board number, then round, then board_id as tiebreaker
+  // Sort in playing order: complete each round/session before moving to the
+  // next one. Sorting board first interleaves Board 1 from every round, then
+  // Board 2 from every round, which makes navigation appear to attach the
+  // wrong result and traveller to Boards 2, 3, 4, ...
   filtered.sort((a, b) => {
-    const ba = boardMap[a.open.board_id]?.board_number || 0;
-    const bb = boardMap[b.open.board_id]?.board_number || 0;
-    if (ba !== bb) return ba - bb;
     const ra = a.open.round || 0;
     const rb = b.open.round || 0;
     if (ra !== rb) return ra - rb;
+    const ba = boardMap[a.open.board_id]?.board_number || 0;
+    const bb = boardMap[b.open.board_id]?.board_number || 0;
+    if (ba !== bb) return ba - bb;
     if (a.open.board_id < b.open.board_id) return -1;
     if (a.open.board_id > b.open.board_id) return 1;
     if (a.open.match_id < b.open.match_id) return -1;
@@ -323,8 +408,11 @@ export function buildTeamRows(boards, results, filters, participantMap) {
     });
   }
 
-  for (let i = 0; i < rows.length; i++) {
-    rows[i].displayBoardNumber = i + 1;
+  // Preserve the source board identity. A filtered deal set may omit boards;
+  // renumbering the remaining rows 1..N makes the board heading disagree with
+  // its result, LIN and traveller.
+  for (const row of rows) {
+    row.displayBoardNumber = row.board?.board_number ?? null;
   }
 
   return rows;
@@ -406,17 +494,30 @@ export function buildPairRows(boards, results, filters) {
 
   return filtered.map((r, i) => {
     const board = boardMap[r.board_id];
-    return { board, result: r, otherRoom: null, displayBoardNumber: i + 1 };
+    return {
+      board,
+      result: r,
+      otherRoom: null,
+      displayBoardNumber: board?.board_number ?? null,
+    };
   });
 }
 
 
 // ── Board row with popup panels ──────────────────────────────────
 
-function BoardRow({ row, isTeams, participantMap, boardResults, highlightParticipantId, ourParticipantId, supabase, userId, analysisId, analysisName, sharedWith, DiscussionView, notesUnread, onNotesRead }) {
+function BoardView({ displayBoard, isTeams, scoring, participantMap, ensureParticipants, highlightParticipantId, ourParticipantId, supabase, userId, analysisId, analysisName, sharedWith, DiscussionView, notesUnread, onNotesRead }) {
   const [popup, setPopup] = useState(null);
   const [notesDiscussion, setNotesDiscussion] = useState(null);
   const [notesLoading, setNotesLoading] = useState(false);
+
+  const { board, result, otherRoom, boardNumber, boardResults } = displayBoard;
+  const scoringKey = String(scoring || '').toLowerCase();
+  const isImpPairs = !isTeams && (
+    scoringKey.includes('imp')
+    || scoringKey.includes('butler')
+    || boardResults.some(r => r.imps_ns != null || Number(r.mp_ns) < 0 || Number(r.mp_ew) < 0)
+  );
 
   const handleOpenNotes = async () => {
     if (onNotesRead) onNotesRead(); // opening marks the discussion read
@@ -425,7 +526,7 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
       return;
     }
     setNotesLoading(true);
-    const resourceId = `${analysisId}:${row.board.id}`;
+    const resourceId = `${analysisId}:${board.id}`;
     const resourceType = 'game_board';
 
     try {
@@ -452,7 +553,7 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
         const { data: created, error: createErr } = await supabase
           .from('discussions')
           .insert({
-            name: `Board ${row.displayBoardNumber ?? row.board.board_number} Notes`,
+            name: `Board ${boardNumber} Notes`,
             created_by: userId,
             resource_type: resourceType,
             resource_id: resourceId,
@@ -489,373 +590,59 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
     setNotesLoading(false);
   };
 
-  if (!row.board) return null;
-
-  // Compute optimal/alternate contract lines
-  let pairsDDBest = null;
-  let optLines = null;
-  if (row.board && hasDDData(row.board) && row.result && !row.result.passed_out
-      && row.result.declarer && row.result.contract_level) {
-    const b = row.board;
-    const r = row.result;
-    // Exclude our own row: a hypothetical score is compared against the
-    // rest of the field, else it self-ties and drags toward 50%
-    const otherResults = boardResults.filter(x => x.id !== r.id);
-    const fieldScores = otherResults.length ? otherResults.map(x => x.score || 0) : null;
-    const declarerIsNs = r.declarer === 'N' || r.declarer === 'S';
-    const ourSideIsNs = ourParticipantId
-      ? r.ns_participant_id === ourParticipantId
-      : declarerIsNs;
-    const ourSide = ourSideIsNs ? 'ns' : 'ew';
-    const weAreDeclaring = ourSideIsNs === declarerIsNs;
-
-    if (isTeams) {
-      // Three categories of "Better" for teams:
-      // 1. Declaring side's better contracts (higher-scoring contracts they could have bid)
-      // 2. Better defense (DD says actual contract doesn't make at claimed tricks)
-      // 3. Defending side's saves (outbid the contract, penalty less than conceded score)
-
-      const declDirs = declarerIsNs ? ['n', 's'] : ['e', 'w'];
-      const defDirs = declarerIsNs ? ['e', 'w'] : ['n', 's'];
-      const declVul = isVul(declarerIsNs ? 'ns' : 'ew', b.vulnerability);
-      const defVul = isVul(declarerIsNs ? 'ew' : 'ns', b.vulnerability);
-      const nsScore = declarerIsNs ? (r.score || 0) : -(r.score || 0);
-      const declActual = r.score || 0; // from declarer's perspective (positive = declarer scores)
-      const defActual = -(r.score || 0); // from defender's perspective
-
-      // Other room's contribution to IMP swing (from our team's perspective)
-      let otherRoomOurScore = null;
-      if (row.otherRoom && ourParticipantId) {
-        const swapped = r.ns_participant_id === row.otherRoom.ew_participant_id;
-        const otherNs = swapped ? -(row.otherRoom.score || 0) : (row.otherRoom.score || 0);
-        otherRoomOurScore = ourSideIsNs ? otherNs : -otherNs;
-      }
-
-      const resultLines = [];
-      const ourActualScore = ourSideIsNs ? nsScore : -nsScore;
-
-      // 1. Declaring side's better contracts — must still outbid the
-      // best contract the defenders can make (no impossible contracts)
-      const defBestContract = bestDDContract(b, declarerIsNs ? 'ew' : 'ns', defVul);
-      for (const denom of ['C', 'D', 'H', 'S', 'NT']) {
-        const denomKey = denom === 'NT' ? 'nt' : denom.toLowerCase();
-        const isMinor = denom === 'C' || denom === 'D';
-        let maxT = 0, bestDir = '';
-        for (const dir of declDirs) {
-          const t = b[`dd_${dir}_${denomKey}`];
-          if (t != null && t > maxT) { maxT = t; bestDir = dir.toUpperCase(); }
-        }
-        if (maxT < 7) continue;
-        const bestLevel = maxT - 6;
-        if (bestLevel < outbidMinLevel(denom, defBestContract)) continue;
-        const score = computeScore(bestLevel, denom, maxT, declVul, isMinor);
-        if (score > declActual) {
-          const ourScore = weAreDeclaring ? score : -score;
-          const line = {
-            type: 'alternate',
-            contract: { level: bestLevel, denom, x: '', dir: bestDir, ot: 0 },
-            ourScore,
-          };
-          if (otherRoomOurScore != null) line.imps = scoreToImps(ourScore + otherRoomOurScore);
-          resultLines.push(line);
-        }
-      }
-
-      // 2. Better defense — DD says actual contract makes fewer tricks
-      if (r.contract_level && r.declarer && !r.passed_out) {
-        const dDir = r.declarer.toLowerCase();
-        const dk = r.contract_denom === 'NT' ? 'nt' : r.contract_denom.toLowerCase();
-        const ddTricks = b[`dd_${dDir}_${dk}`];
-        if (ddTricks != null && ddTricks < (r.tricks || 0)) {
-          const needed = r.contract_level + 6;
-          const isMin = r.contract_denom === 'C' || r.contract_denom === 'D';
-          const x = r.contract_x || '';
-          let ddDeclScore;
-          if (ddTricks >= needed) {
-            ddDeclScore = x === 'X' ? computeDoubledMaking(r.contract_level, r.contract_denom, ddTricks, declVul, isMin)
-                                    : computeScore(r.contract_level, r.contract_denom, ddTricks, declVul, isMin);
-          } else {
-            const down = needed - ddTricks;
-            ddDeclScore = x === 'X' ? doubledDownScore(down, declVul) : (declVul ? -100 * down : -50 * down);
-          }
-          if (ddDeclScore < declActual) {
-            const ddOt = ddTricks - needed;
-            const ourScore = weAreDeclaring ? ddDeclScore : -ddDeclScore;
-            const line = {
-              type: 'defense',
-              contract: { level: r.contract_level, denom: r.contract_denom, x, dir: r.declarer, ot: ddOt },
-              ourScore,
-              tricks: ddTricks,
-            };
-            if (otherRoomOurScore != null) line.imps = scoreToImps(ourScore + otherRoomOurScore);
-            resultLines.push(line);
-          }
-        }
-      }
-
-      // 3. Defending side's saves — must outbid the actual contract
-      if (r.contract_level) {
-        const actualLevel = r.contract_level;
-        const actualDenomRank = denomRank(r.contract_denom);
-
-        for (const denom of ['C', 'D', 'H', 'S', 'NT']) {
-          const denomKey = denom === 'NT' ? 'nt' : denom.toLowerCase();
-          const saveDenomRank = denomRank(denom);
-          // Minimum level to outbid the actual contract
-          const minLevel = saveDenomRank > actualDenomRank ? actualLevel : actualLevel + 1;
-          if (minLevel > 7) continue;
-
-          let maxT = 0, bestDir = '';
-          for (const dir of defDirs) {
-            const t = b[`dd_${dir}_${denomKey}`];
-            if (t != null && t > maxT) { maxT = t; bestDir = dir.toUpperCase(); }
-          }
-
-          const needed = minLevel + 6;
-          const oppsGame = isGameContract(actualLevel, r.contract_denom);
-          let saveScore;
-          if (maxT >= needed) {
-            // Save actually makes — compute making score (from defender's perspective)
-            const isMinor = denom === 'C' || denom === 'D';
-            saveScore = computeScore(minLevel, denom, maxT, defVul, isMinor);
-          } else {
-            // Goes down — doubled over a game, undoubled in a part-score battle
-            const down = needed - maxT;
-            saveScore = oppsGame ? doubledDownScore(down, defVul)
-                                 : (defVul ? -100 * down : -50 * down);
-          }
-
-          // saveScore is from defender's perspective. Compare vs defActual.
-          if (saveScore > defActual) {
-            const down = Math.max(0, needed - maxT);
-            const ot = maxT >= needed ? maxT - needed : -down;
-            // From our team's perspective
-            const ourScore = weAreDeclaring ? -saveScore : saveScore;
-            const line = {
-              type: 'save',
-              contract: { level: minLevel, denom, x: down > 0 && oppsGame ? 'X' : '', dir: bestDir, ot },
-              ourScore,
-            };
-            if (otherRoomOurScore != null) line.imps = scoreToImps(ourScore + otherRoomOurScore);
-            resultLines.push(line);
-          }
-        }
-      }
-
-      if (resultLines.length > 0) {
-        optLines = resultLines.sort((a, b) => b.ourScore - a.ourScore);
-      }
-    } else {
-      // Pairs: DD optimal for our contract + better alternate contracts
-      // IMP pairs compare via cross-IMPs against the other tables; MP pairs via MP%
-      const impPairs = boardResults.some(x => x.imps_ns != null);
-      const otherNsScores = impPairs
-        ? boardResults.filter(x => x.id !== r.id).map(x => x.score || 0)
-        : [];
-      const crossImpsNs = (nsScore) => {
-        if (!otherNsScores.length) return null;
-        const total = otherNsScores.reduce((sum, s) => sum + scoreToImps(nsScore - s), 0);
-        return Math.round((total / otherNsScores.length) * 10) / 10;
-      };
-
-      const dDir = r.declarer.toLowerCase();
-      const dk = r.contract_denom === 'NT' ? 'nt' : r.contract_denom.toLowerCase();
-      const ddTricks = b[`dd_${dDir}_${dk}`];
-
-      if (ddTricks != null) {
-        const needed = r.contract_level + 6;
-        const declSide = declarerIsNs ? 'ns' : 'ew';
-        const declVul = isVul(declSide, b.vulnerability);
-        const isMin = r.contract_denom === 'C' || r.contract_denom === 'D';
-        const x = r.contract_x || '';
-
-        // DD score for actual contract
-        let ddDeclScore;
-        if (ddTricks >= needed) {
-          ddDeclScore = x === 'X' ? computeDoubledMaking(r.contract_level, r.contract_denom, ddTricks, declVul, isMin)
-                                  : computeScore(r.contract_level, r.contract_denom, ddTricks, declVul, isMin);
-        } else {
-          const down = needed - ddTricks;
-          ddDeclScore = x === 'X' ? doubledDownScore(down, declVul) : (declVul ? -100 * down : -50 * down);
-        }
-
-        const ddOptimalForUs = weAreDeclaring ? ddDeclScore : -ddDeclScore;
-        const ddOptNsScore = declarerIsNs ? ddDeclScore : -ddDeclScore;
-        const ddOt = ddTricks - needed;
-
-        const resultLines = [];
-
-        // Line 1: DD optimal for our contract
-        const optLine = {
-          type: 'optimal',
-          label: 'DD',
-          contract: { level: r.contract_level, denom: r.contract_denom, x, dir: r.declarer, ot: ddOt },
-          nsScore: ddOptNsScore,
-          ourScore: ddOptimalForUs,
-          tricks: ddTricks,
-        };
-        if (impPairs) {
-          const impNs = crossImpsNs(ddOptNsScore);
-          if (impNs != null) optLine.imps = ourSideIsNs ? impNs : -impNs;
-        } else if (fieldScores) {
-          optLine.nsMp = calcMpPct(ddOptNsScore, fieldScores, 'ns');
-          optLine.ewMp = calcMpPct(-ddOptNsScore, fieldScores, 'ew');
-        }
-        resultLines.push(optLine);
-
-        // Alternate contracts for our side that beat our ACTUAL result
-        // (not just the DD par of the contract we played).
-        // When the opponents declared, our alternative must OUTBID their
-        // contract (a save), assumed doubled when it goes down.
-        const ourActualScore = ourSideIsNs ? (r.score || 0) : -(r.score || 0);
-        const ourDirs = ourSideIsNs ? ['n', 's'] : ['e', 'w'];
-        const ourVul = isVul(ourSide, b.vulnerability);
-
-        const pushAltLine = (type, contract, ourScore) => {
-          const nsScore = ourSideIsNs ? ourScore : -ourScore;
-          const altLine = { type, contract, nsScore, ourScore };
-          if (impPairs) {
-            const impNs = crossImpsNs(nsScore);
-            if (impNs != null) altLine.imps = ourSideIsNs ? impNs : -impNs;
-          } else if (fieldScores) {
-            altLine.nsMp = calcMpPct(nsScore, fieldScores, 'ns');
-            altLine.ewMp = calcMpPct(-nsScore, fieldScores, 'ew');
-          }
-          resultLines.push(altLine);
-        };
-
-        // Opponents' best makeable contract — the bar our alternates must clear
-        const oppSide = ourSideIsNs ? 'ew' : 'ns';
-        const oppBestContract = weAreDeclaring
-          ? bestDDContract(b, oppSide, isVul(oppSide, b.vulnerability))
-          : null;
-
-        for (const denom of ['C', 'D', 'H', 'S', 'NT']) {
-          const denomKey = denom === 'NT' ? 'nt' : denom.toLowerCase();
-          const isMinor = denom === 'C' || denom === 'D';
-          let maxT = 0, bestDir = '';
-          for (const dir of ourDirs) {
-            const t = b[`dd_${dir}_${denomKey}`];
-            if (t != null && t > maxT) { maxT = t; bestDir = dir.toUpperCase(); }
-          }
-          if (!bestDir) continue;
-
-          if (weAreDeclaring) {
-            // Our alternates must still outbid the opponents' best
-            // makeable contract — they wouldn't let us play lower.
-            const minLvl = outbidMinLevel(denom, oppBestContract);
-            if (maxT >= minLvl + 6) {
-              const bestLevel = maxT - 6;
-              const bestScore = computeScore(bestLevel, denom, maxT, ourVul, isMinor);
-              if (bestScore > ourActualScore) {
-                pushAltLine('alternate',
-                  { level: bestLevel, denom, x: '', dir: bestDir, ot: maxT - (bestLevel + 6) },
-                  bestScore);
-              }
-            } else if (oppBestContract && minLvl <= 7 && maxT > 0) {
-              // Nothing makeable high enough — was a cheaper save available?
-              const down = minLvl + 6 - maxT;
-              const oppsGame = isGameContract(oppBestContract.level, oppBestContract.denom);
-              const saveScore = oppsGame ? doubledDownScore(down, ourVul)
-                                         : (ourVul ? -100 * down : -50 * down);
-              if (saveScore > ourActualScore) {
-                pushAltLine('save',
-                  { level: minLvl, denom, x: oppsGame ? 'X' : '', dir: bestDir, ot: -down },
-                  saveScore);
-              }
-            }
-          } else {
-            // Opponents declared — we can only outbid them (save)
-            const minLevel = denomRank(denom) > denomRank(r.contract_denom)
-              ? r.contract_level : r.contract_level + 1;
-            if (minLevel > 7) continue;
-            const needed = minLevel + 6;
-            const oppsGame = isGameContract(r.contract_level, r.contract_denom);
-            let saveScore;
-            if (maxT >= needed) {
-              saveScore = computeScore(minLevel, denom, maxT, ourVul, isMinor);
-            } else {
-              const down = needed - maxT;
-              saveScore = oppsGame ? doubledDownScore(down, ourVul)
-                                   : (ourVul ? -100 * down : -50 * down);
-            }
-            if (saveScore > ourActualScore) {
-              const down = Math.max(0, needed - maxT);
-              pushAltLine('save',
-                { level: minLevel, denom, x: down > 0 && oppsGame ? 'X' : '', dir: bestDir, ot: maxT >= needed ? maxT - needed : -down },
-                saveScore);
-            }
-          }
-        }
-
-        // When we outbid them (e.g. a save), letting them play their best
-        // contract is also an option — show it if it beats what we got.
-        if (weAreDeclaring && oppBestContract && -oppBestContract.score > ourActualScore) {
-          pushAltLine('defense',
-            { level: oppBestContract.level, denom: oppBestContract.denom, x: '', dir: oppBestContract.dir, ot: 0 },
-            -oppBestContract.score);
-        }
-
-        // Sort alternates by score descending (keep DD optimal first)
-        const optimal = resultLines[0];
-        const alts = resultLines.slice(1).sort((a, b) => b.ourScore - a.ourScore);
-        optLines = [optimal, ...alts];
-      }
-    }
-  }
+  if (!board) return null;
 
   return (
     <div className="border-b-2 border-gray-400 relative mb-3 pb-2">
-      <div>
-        <div>
-          <div className="px-2 py-1">
-            <HandDiagram
-              board={row.board}
-              result={row.result}
-              otherRoom={row.otherRoom}
-              participantMap={participantMap}
-              ourParticipantId={ourParticipantId}
-              isTeams={isTeams}
-              ddBest={pairsDDBest}
-              optimalLines={optLines}
-              onOtherRoom={isTeams && row.otherRoom ? () => setPopup(popup === 'otherroom' ? null : 'otherroom') : undefined}
-              onAnalysis={undefined}
-              onTraveller={boardResults.length > 1 ? () => setPopup(popup === 'traveller' ? null : 'traveller') : undefined}
-              boardNumber={row.displayBoardNumber ?? row.board.board_number}
-              onNotes={supabase ? () => handleOpenNotes() : undefined}
-              notesLoading={notesLoading}
-              notesUnread={notesUnread}
-              isImpPairs={!isTeams && boardResults.some(r => r.imps_ns != null)}
-            />
-          </div>
-        </div>
+      <div className="px-2 py-1">
+        <HandDiagram
+          board={board}
+          result={result}
+          otherRoom={otherRoom}
+          participantMap={participantMap}
+          ourParticipantId={ourParticipantId}
+          onOtherRoom={isTeams && otherRoom ? () => setPopup(popup === 'otherroom' ? null : 'otherroom') : undefined}
+          onTraveller={boardResults.length > 1 ? async () => {
+            if (popup === 'traveller') {
+              setPopup(null);
+              return;
+            }
+            await ensureParticipants();
+            setPopup('traveller');
+          } : undefined}
+          onNotes={supabase ? () => handleOpenNotes() : undefined}
+          notesLoading={notesLoading}
+          notesUnread={notesUnread}
+          isTeams={isTeams}
+          isImpPairs={isImpPairs}
+          boardNumber={boardNumber}
+        />
       </div>
 
-      {/* Popup overlay */}
       {popup && popup !== 'notes' && (
         <TravellerPopup
           popup={popup}
-          board={row.board}
-          result={row.result}
-          otherRoom={row.otherRoom}
+          board={board}
+          result={result}
+          otherRoom={otherRoom}
           boardResults={boardResults}
           participantMap={participantMap}
           highlightParticipantId={highlightParticipantId}
           ourParticipantId={ourParticipantId}
           isTeams={isTeams}
+          scoring={scoring}
           onClose={() => setPopup(null)}
-          boardNumber={row.displayBoardNumber ?? row.board.board_number}
+          boardNumber={boardNumber}
         />
       )}
 
-      {/* Notes discussion popup */}
       {popup === 'notes' && notesDiscussion && (
         <NotesPopup
           discussion={notesDiscussion}
           supabase={supabase}
           userId={userId}
           onClose={() => setPopup(null)}
-          boardNumber={row.displayBoardNumber ?? row.board.board_number}
+          boardNumber={boardNumber}
           analysisName={analysisName}
           DiscussionView={DiscussionView}
         />
@@ -863,6 +650,7 @@ function BoardRow({ row, isTeams, participantMap, boardResults, highlightPartici
     </div>
   );
 }
+
 
 
 function NotesPopup({ discussion, supabase, userId, onClose, boardNumber, analysisName, DiscussionView }) {
@@ -993,10 +781,28 @@ function NotesPopupFallback({ discussion, supabase, userId, onClose, boardNumber
 
 
 function TravellerPopup({ popup, board, result, otherRoom, boardResults, participantMap,
-                           highlightParticipantId, ourParticipantId, isTeams, onClose, boardNumber }) {
+                           highlightParticipantId, ourParticipantId, isTeams, scoring, onClose, boardNumber }) {
+  const [pos, setPos] = React.useState(null);
+  const dragRef = React.useRef(null);
+
+  const handleMouseDown = (e) => {
+    if (e.target.tagName === 'BUTTON') return;
+    const el = dragRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    if (pos === null) setPos({ x: rect.left, y: rect.top });
+    const startX = e.clientX - rect.left;
+    const startY = e.clientY - rect.top;
+    const onMove = (ev) => setPos({ x: ev.clientX - startX, y: ev.clientY - startY });
+    const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    e.preventDefault();
+  };
+
   const popupTitle = popup === 'traveller' ? 'Traveller'
     : popup === 'otherroom' ? 'Other Room'
-    : 'Analysis';
+    : '';
 
   const popupContent = popup === 'traveller' ? (
     <TravellerTable
@@ -1005,6 +811,7 @@ function TravellerPopup({ popup, board, result, otherRoom, boardResults, partici
       participantMap={participantMap}
       highlightParticipantId={highlightParticipantId}
       isTeams={isTeams}
+      scoring={scoring}
     />
   ) : popup === 'otherroom' && board && otherRoom ? (
     <HandDiagram
@@ -1014,31 +821,28 @@ function TravellerPopup({ popup, board, result, otherRoom, boardResults, partici
       participantMap={participantMap}
       ourParticipantId={ourParticipantId}
     />
-  ) : popup === 'analysis' ? (
-    <AnalysisPanel
-      board={board}
-      result={result}
-      otherRoom={otherRoom}
-      boardResults={boardResults}
-      participantMap={participantMap}
-      highlightParticipantId={highlightParticipantId}
-      ourParticipantId={ourParticipantId}
-      isTeams={isTeams}
-    />
   ) : null;
+
+  const otherRoomWidth = popup === 'otherroom'
+    ? { width: 'max-content', maxWidth: 'calc(100vw - 16px)', minWidth: 0 }
+    : { width: 'max-content', maxWidth: 'calc(100vw - 16px)', minWidth: 0 };
+  const desktopStyle = pos
+    ? { position: 'fixed', left: pos.x, top: pos.y, ...otherRoomWidth, maxHeight: '90vh', zIndex: 30 }
+    : { position: 'fixed', right: 0, top: 0, bottom: 0, ...otherRoomWidth, zIndex: 30 };
 
   return (
     <>
-      {/* Desktop: fixed to the right side of viewport */}
-      <div className="hidden md:block fixed right-0 top-0 bottom-0 bg-white border-l border-gray-200 shadow-lg z-30 overflow-auto"
-           style={{ width: '45%', maxWidth: '650px', minWidth: '450px' }}>
-        <div className="sticky top-0 bg-white border-b border-gray-200 px-4 py-2 flex items-center justify-between z-10">
-          <span className="text-sm font-bold text-gray-700">
+      {/* Desktop: draggable panel (initially pinned to right) */}
+      <div ref={dragRef} className="hidden md:flex flex-col bg-white border-l border-gray-200 shadow-lg overflow-hidden"
+           style={desktopStyle}>
+        <div className="bg-white border-b border-gray-200 px-4 py-2 flex items-center justify-between flex-shrink-0"
+             style={{ cursor: 'move' }} onMouseDown={handleMouseDown}>
+          <span className="text-sm font-bold text-gray-700 select-none">
             Board {boardNumber} — {popupTitle}
           </span>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
         </div>
-        <div className="p-4">{popupContent}</div>
+        <div className="p-4 overflow-auto flex-1">{popupContent}</div>
       </div>
 
       {/* Mobile: full-screen overlay */}
@@ -1079,14 +883,20 @@ function isGameContract(level, denom) {
   return pts >= 100;
 }
 
-function TravellerTable({ board, boardResults, participantMap, highlightParticipantId, isTeams }) {
+export function TravellerTable({ board, boardResults, participantMap, highlightParticipantId, isTeams, scoring }) {
   const [sortKey, setSortKey] = useState('ns');
   const [sortAsc, setSortAsc] = useState(true);
   const [expandedIdx, setExpandedIdx] = useState(null);
+  const [viewResult, setViewResult] = useState(null);
 
   if (!boardResults.length) return null;
 
-  const isImpPairs = !isTeams && boardResults.some(r => r.imps_ns != null);
+  const scoringKey = String(scoring || '').toLowerCase();
+  const scoringSaysImps = scoringKey.includes('imp') || scoringKey.includes('butler');
+  const valuesLookLikeImps = boardResults.some(r =>
+    Number(r.mp_ns) < 0 || Number(r.mp_ew) < 0
+  );
+  const isImpPairs = !isTeams && (scoringSaysImps || valuesLookLikeImps || boardResults.some(r => r.imps_ns != null));
 
   const handleSort = (key) => {
     if (sortKey === key) {
@@ -1122,10 +932,10 @@ function TravellerTable({ board, boardResults, participantMap, highlightParticip
       case 'ns': cmp = (participantMap[a.ns_participant_id]?.number || 0) - (participantMap[b.ns_participant_id]?.number || 0); break;
       case 'ew': cmp = (participantMap[a.ew_participant_id]?.number || 0) - (participantMap[b.ew_participant_id]?.number || 0); break;
       case 'pct': {
-        const pa = pctVal(a); const pb = pctVal(b);
+        const pa = pctVal(a, boardResults); const pb = pctVal(b, boardResults);
         cmp = (pa ?? -1) - (pb ?? -1); break;
       }
-      case 'imps': cmp = (a.imps_ns || 0) - (b.imps_ns || 0); break;
+      case 'imps': cmp = impValue(a, isImpPairs) - impValue(b, isImpPairs); break;
       case 'room': cmp = (a.room || '').localeCompare(b.room || ''); break;
       default: break;
     }
@@ -1134,12 +944,114 @@ function TravellerTable({ board, boardResults, participantMap, highlightParticip
 
   const thClass = "py-1.5 px-1.5 text-left font-medium cursor-pointer hover:bg-gray-100 select-none whitespace-nowrap";
 
+  if (isTeams) {
+    const grouped = new Map();
+    for (const r of boardResults) {
+      const key = `${r.match_id || ''}__${r.round || ''}`;
+      if (!grouped.has(key)) grouped.set(key, {});
+      grouped.get(key)[r.room === 'closed' ? 'closed' : 'open'] = r;
+    }
+    const pairs = [...grouped.values()].filter(p => p.closed || p.open);
+    const seatCell = (r, side) => {
+      if (!r) return <span className="text-gray-300">—</span>;
+      const participantId = side === 'NS' ? r.ns_participant_id : r.ew_participant_id;
+      const team = participantMap[participantId]?.name || '—';
+      const players = side === 'NS'
+        ? [r.player_n_name || 'North', r.player_s_name || 'South']
+        : [r.player_e_name || 'East', r.player_w_name || 'West'];
+      return <><div className="font-semibold">{team}</div><div className="text-gray-500">{players.join(' · ')}</div></>;
+    };
+    const contractCell = (r) => r ? (r.passed_out ? 'Pass' : <>{r.contract_level}<span style={{ color: suitColor(r.contract_denom) }}>{SUIT_SYMBOLS_T[r.contract_denom] || r.contract_denom}</span>{r.contract_x || ''} <span className="text-gray-400">{r.declarer}</span></>) : '—';
+    const leadCell = (r) => r?.lead_suit ? <><span style={{ color: suitColor(r.lead_suit) }}>{SUIT_SYMBOLS_T[r.lead_suit]}</span>{r.lead_rank}</> : '—';
+    const stacked = (closedValue, openValue) => (
+      <div className="leading-5 whitespace-nowrap">
+        <div><span className="text-gray-400 mr-1">C</span>{closedValue}</div>
+        <div className="border-t border-gray-100"><span className="text-gray-400 mr-1">O</span>{openValue}</div>
+      </div>
+    );
+    const overlay = viewResult && (
+      <div style={{ position: 'fixed', inset: 0, zIndex: 80, background: 'rgba(0,0,0,0.3)' }} onClick={() => setViewResult(null)}>
+        <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 'max-content', maxWidth: 'calc(100vw - 16px)', background: '#fff', boxShadow: '-4px 0 20px rgba(0,0,0,0.18)', overflow: 'auto' }} onClick={event => event.stopPropagation()}>
+          <div style={{ position: 'sticky', top: 0, zIndex: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px', borderBottom: '1px solid #e5e7eb', background: '#fff' }}>
+            <span style={{ fontWeight: 700, fontSize: '0.875rem' }}>Board {board.board_number} — View</span>
+            <button type="button" onClick={() => setViewResult(null)} style={{ border: 'none', background: 'none', color: '#6b7280', cursor: 'pointer', fontSize: '1.25rem', lineHeight: 1 }}>&times;</button>
+          </div>
+          <div style={{ padding: 16 }}><HandDiagram board={board} result={viewResult} participantMap={participantMap} isTeams /></div>
+        </div>
+      </div>
+    );
+
+    const roomPanel = (r) => {
+      if (!r) return <div className="text-gray-300 p-2">No result</div>;
+      const score = Number(r.score || 0);
+      const scoreSide = score > 0 ? 'NS' : score < 0 ? 'EW' : '';
+      const canView = linHasPlay(r.lin) || linHasBidding(r.lin);
+      return <div className="min-w-[225px]">
+        <div className="grid grid-cols-[26px_1fr] gap-x-2 gap-y-1">
+          <div className="font-semibold text-gray-500">NS</div><div>{seatCell(r, 'NS')}</div>
+          <div className="font-semibold text-gray-500 border-t border-gray-100 pt-1">EW</div><div className="border-t border-gray-100 pt-1">{seatCell(r, 'EW')}</div>
+        </div>
+        <div className="mt-2 pt-2 border-t border-gray-200 flex items-center gap-3 whitespace-nowrap">
+          <span><span className="text-gray-400">Contract </span>{contractCell(r)}</span>
+          <span><span className="text-gray-400">Tricks </span>{r.tricks ?? '—'}</span>
+          <span><span className="text-gray-400">Lead </span>{leadCell(r)}</span>
+        </div>
+        <div className="mt-1 flex items-center gap-3">
+          <span className="font-semibold"><span className="text-gray-400 font-normal">Score </span>{scoreSide} {score === 0 ? '0' : `+${Math.abs(score)}`}</span>
+          {canView && <button onClick={() => setViewResult(r)} className="px-2 py-0.5 rounded bg-emerald-600 text-white">View</button>}
+        </div>
+      </div>;
+    };
+
+    const selectedTeamName = participantMap[highlightParticipantId]?.name || 'Team';
+
+    return <>
+      <table className="text-xs" style={{ borderCollapse: 'collapse', width: 'auto' }}>
+        <thead><tr className="border-b border-gray-300 text-gray-600 bg-gray-50">
+          <th className="py-1.5 px-3 text-left">Closed Room</th>
+          <th className="py-1.5 px-3 text-left border-l border-gray-200">Open Room</th>
+          <th className="py-1.5 px-3 text-left border-l border-gray-200">{selectedTeamName} Score</th>
+        </tr></thead>
+        <tbody>{pairs.map((pair, index) => {
+          const c = pair.closed; const o = pair.open;
+          const teamScore = (r) => {
+            if (!r) return null;
+            const score = Number(r.score || 0);
+            if (!highlightParticipantId) return score;
+            if (r.ns_participant_id === highlightParticipantId) return score;
+            if (r.ew_participant_id === highlightParticipantId) return -score;
+            return null;
+          };
+          const closedScore = teamScore(c); const openScore = teamScore(o);
+          const swing = closedScore == null || openScore == null ? null : closedScore + openScore;
+          const imps = swing == null ? null : scoreToImps(swing);
+          const signed = (n) => n == null ? '—' : n > 0 ? `+${n}` : `${n}`;
+          return <tr key={index} className={highlightParticipantId ? 'bg-blue-50' : ''}>
+            <td className="py-2 px-3 align-top border-b border-gray-200">{roomPanel(c)}</td>
+            <td className="py-2 px-3 align-top border-l border-b border-gray-200">{roomPanel(o)}</td>
+            <td className="py-2 px-3 align-top border-l border-b border-gray-200 min-w-[155px]">
+              <div className="min-h-[112px] flex flex-col">
+                <div>Closed: <span className="font-mono font-semibold ml-2">{signed(closedScore)}</span></div>
+                <div className="mt-2">Open: <span className="font-mono font-semibold ml-2">{signed(openScore)}</span></div>
+                <div className={`mt-auto pt-2 border-t border-gray-200 font-bold ${imps > 0 ? 'text-green-700' : imps < 0 ? 'text-red-600' : 'text-gray-600'}`}>IMPs: {signed(imps)}</div>
+              </div>
+            </td>
+          </tr>;
+        })}</tbody>
+      </table>
+      {overlay}
+    </>;
+  }
+
   return (
-    <table className="w-full text-xs" style={{ borderCollapse: 'collapse' }}>
+    <>
+    <style>{'.traveller-table th, .traveller-table td { padding-left: 4px !important; padding-right: 4px !important; }'}</style>
+    <table className="traveller-table text-xs" style={{ borderCollapse: 'collapse', width: 'auto' }}>
       <thead>
         <tr className="border-b border-gray-300 text-gray-600 bg-gray-50">
-          <th className={thClass} onClick={() => handleSort('ns')}>NS{sortIndicator('ns')}</th>
-          <th className={thClass} onClick={() => handleSort('ew')}>EW{sortIndicator('ew')}</th>
+          {isTeams && <th className={thClass} onClick={() => handleSort('ns')}>Team{sortIndicator('ns')}</th>}
+          <th className={thClass} onClick={() => handleSort('ns')}>N / S{!isTeams && sortIndicator('ns')}</th>
+          <th className={thClass} onClick={() => handleSort('ew')}>E / W{sortIndicator('ew')}</th>
           <th className={thClass} onClick={() => handleSort('contract')}>Contract{sortIndicator('contract')}</th>
           <th className={`${thClass} text-center`} onClick={() => handleSort('tricks')}>Tricks{sortIndicator('tricks')}</th>
           <th className={thClass} onClick={() => handleSort('lead')}>Lead{sortIndicator('lead')}</th>
@@ -1159,19 +1071,41 @@ function TravellerTable({ board, boardResults, participantMap, highlightParticip
              r.ew_participant_id === highlightParticipantId);
           const nsName = participantMap[r.ns_participant_id]?.name || '';
           const ewName = participantMap[r.ew_participant_id]?.name || '';
-          const pct = pctVal(r);
+          // The result is the canonical source for seat assignments. Participant
+          // rosters identify team membership, not the seats used at this table.
+          const northName = r.player_n_name || 'North';
+          const southName = r.player_s_name || 'South';
+          const eastName = r.player_e_name || 'East';
+          const westName = r.player_w_name || 'West';
+          const pct = pctVal(r, boardResults);
+          const imps = impValue(r, isImpPairs);
           const scoreStr = r.score > 0 ? `+${r.score}` : `${r.score}`;
 
           const hasBidding = r.lin && /mb\|[^|]+\|/.test(r.lin);
           const isExpanded = expandedIdx === i;
-          const colCount = isTeams ? 9 : 8;
+          const colCount = isTeams ? 10 : 8;
 
           return (
             <React.Fragment key={i}>
               <tr className={`border-b border-gray-50 ${hl ? 'bg-blue-50 font-semibold' : 'hover:bg-gray-50'} ${hasBidding ? 'cursor-pointer' : ''}`}
                 onClick={hasBidding ? () => setExpandedIdx(isExpanded ? null : i) : undefined}>
-                <td className="py-1 px-1.5 truncate max-w-[90px]" title={nsName}>{shortPairName(nsName)}</td>
-                <td className="py-1 px-1.5 truncate max-w-[90px]" title={ewName}>{shortPairName(ewName)}</td>
+                {/* Teams only: NS team (top) / EW team (bottom). */}
+                {isTeams && (
+                  <td className="py-1 px-1.5 whitespace-nowrap">
+                    <div className="font-medium truncate max-w-[105px]" title={nsName}>{nsName || '—'}</div>
+                    <div className="text-gray-400 truncate max-w-[105px]" title={ewName}>{ewName || '—'}</div>
+                  </td>
+                )}
+                {/* N / S player names */}
+                <td className="py-1 px-1.5 whitespace-nowrap">
+                  <div className="truncate max-w-[95px]" title={northName}>{northName}</div>
+                  <div className="text-gray-400 truncate max-w-[95px]" title={southName}>{southName}</div>
+                </td>
+                {/* E / W player names */}
+                <td className="py-1 px-1.5 whitespace-nowrap">
+                  <div className="truncate max-w-[95px]" title={eastName}>{eastName}</div>
+                  <div className="text-gray-400 truncate max-w-[95px]" title={westName}>{westName}</div>
+                </td>
                 <td className="py-1 px-1.5">
                   {r.passed_out ? 'Pass' : (
                     <>
@@ -1189,20 +1123,21 @@ function TravellerTable({ board, boardResults, participantMap, highlightParticip
                 <td className="py-1 px-1.5 text-right font-mono">{r.passed_out ? '' : scoreStr}</td>
                 {isTeams && <td className="py-1 px-1.5 text-center text-gray-400">{r.room === 'open' ? 'O' : 'C'}</td>}
                 {isTeams || isImpPairs
-                  ? <td className={`py-1 px-1.5 text-right font-medium ${(r.imps_ns || 0) > 0 ? 'text-green-700' : (r.imps_ns || 0) < 0 ? 'text-red-600' : 'text-gray-500'}`}>
-                      {r.imps_ns != null ? (r.imps_ns > 0 ? `+${r.imps_ns}` : r.imps_ns) : ''}
+                  ? <td className={`py-1 px-1.5 text-right font-medium ${imps > 0 ? 'text-green-700' : imps < 0 ? 'text-red-600' : 'text-gray-500'}`}>
+                      {imps != null ? (imps > 0 ? `+${imps}` : imps) : ''}
                     </td>
                   : <td className="py-1 px-1.5 text-right">{pct != null && <PctBadge pct={pct} />}</td>
                 }
                 <td className="py-1 px-1.5 text-center">
                   {(() => {
-                    const lin = (linHasPlay(r.lin) || linHasBidding(r.lin)) ? r.lin : buildReplayLin(board, r);
-                    return lin && (
+                    const hasPlay = linHasPlay(r.lin);
+                    const hasBidding = linHasBidding(r.lin);
+                    return (hasPlay || hasBidding) && (
                       <button
-                        onClick={(e) => { e.stopPropagation(); openHandviewer(lin); }}
+                        onClick={(e) => { e.stopPropagation(); setViewResult(r); }}
                         className="px-1.5 py-0.5 rounded text-xs bg-emerald-600 text-white hover:bg-emerald-700"
                       >
-                        Open
+                        View
                       </button>
                     );
                   })()}
@@ -1220,12 +1155,62 @@ function TravellerTable({ board, boardResults, participantMap, highlightParticip
         })}
       </tbody>
     </table>
+    {viewResult && (
+      <div
+        style={{ position: 'fixed', inset: 0, zIndex: 80, background: 'rgba(0,0,0,0.3)' }}
+        onClick={() => setViewResult(null)}
+      >
+        <div
+          style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 'max-content', maxWidth: 'calc(100vw - 16px)', background: '#fff', boxShadow: '-4px 0 20px rgba(0,0,0,0.18)', overflow: 'auto' }}
+          onClick={event => event.stopPropagation()}
+        >
+          <div style={{ position: 'sticky', top: 0, zIndex: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px', borderBottom: '1px solid #e5e7eb', background: '#fff' }}>
+            <span style={{ fontWeight: 700, fontSize: '0.875rem' }}>Board {board.board_number} — View</span>
+            <button type="button" onClick={() => setViewResult(null)} style={{ border: 'none', background: 'none', color: '#6b7280', cursor: 'pointer', fontSize: '1.25rem', lineHeight: 1 }}>&times;</button>
+          </div>
+          <div style={{ padding: 16 }}>
+            <HandDiagram
+              board={board}
+              result={viewResult}
+              participantMap={participantMap}
+              isTeams={isTeams}
+            />
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 
-function pctVal(r) {
-  const maxMp = (r.mp_ns || 0) + (r.mp_ew || 0);
-  return maxMp > 0 ? Math.round(((r.mp_ns || 0) / maxMp) * 100) : null;
+function pctVal(r, boardResults = []) {
+  const ns = r.mp_ns == null ? null : Number(r.mp_ns);
+  const ew = r.mp_ew == null ? null : Number(r.mp_ew);
+  const nsValid = Number.isFinite(ns);
+  const ewValid = Number.isFinite(ew);
+
+  if (nsValid && ewValid && ns + ew > 0) return Math.round((ns / (ns + ew)) * 100);
+  if (nsValid && ns >= 0 && ns <= 100) return Math.round(ns);
+  if (ewValid && ew >= 0 && ew <= 100) return Math.round(100 - ew);
+
+  // Some imports contain only the raw NS score. Derive the standard
+  // matchpoint percentage from the board's score field when stored MPs are
+  // unavailable: one point per lower score and half a point per tie.
+  const peers = boardResults.filter(other => other !== r && Number.isFinite(Number(other.score)));
+  if (!peers.length || !Number.isFinite(Number(r.score))) return null;
+  const score = Number(r.score);
+  const matchpoints = peers.reduce((total, other) => {
+    const otherScore = Number(other.score);
+    return total + (score > otherScore ? 1 : score === otherScore ? 0.5 : 0);
+  }, 0);
+  return Math.round((matchpoints / peers.length) * 100);
+}
+
+function impValue(result, impPairs) {
+  const stored = result.imps_ns ?? (impPairs ? result.mp_ns : null);
+  if (stored == null || stored === '') return null;
+  const value = Number(stored);
+  return Number.isFinite(value) ? value : null;
 }
 
 function PctBadge({ pct }) {
@@ -1233,6 +1218,12 @@ function PctBadge({ pct }) {
   if (pct >= 65) color = 'text-green-700';
   else if (pct >= 45) color = 'text-gray-600';
   return <span className={`font-medium ${color}`}>{pct}%</span>;
+}
+
+function rosterName(participant, index) {
+  const entry = participant?.roster?.[index];
+  if (typeof entry === 'string') return entry;
+  return entry?.name || entry?.player_name || '';
 }
 
 function shortPairName(name) {
