@@ -944,6 +944,16 @@ export function TravellerTable({ board, boardResults, participantMap, highlightP
 
   const thClass = "py-1.5 px-1.5 text-left font-medium cursor-pointer hover:bg-gray-100 select-none whitespace-nowrap";
 
+  const rosterNames = (participantId) => {
+    const rawRoster = participantMap[participantId]?.roster;
+    let roster = rawRoster;
+    if (typeof roster === 'string') {
+      try { roster = JSON.parse(roster); } catch { roster = []; }
+    }
+    if (!Array.isArray(roster)) return [];
+    return roster.map(player => typeof player === 'string' ? player : player?.name).filter(Boolean);
+  };
+
   if (isTeams) {
     const grouped = new Map();
     for (const r of boardResults) {
@@ -1071,12 +1081,14 @@ export function TravellerTable({ board, boardResults, participantMap, highlightP
              r.ew_participant_id === highlightParticipantId);
           const nsName = participantMap[r.ns_participant_id]?.name || '';
           const ewName = participantMap[r.ew_participant_id]?.name || '';
-          // The result is the canonical source for seat assignments. Participant
-          // rosters identify team membership, not the seats used at this table.
-          const northName = r.player_n_name || 'North';
-          const southName = r.player_s_name || 'South';
-          const eastName = r.player_e_name || 'East';
-          const westName = r.player_w_name || 'West';
+          // Prefer canonical seat assignments stored on the result. Older pairs
+          // rows predate those fields, so fall back to the pair's ordered roster.
+          const nsRoster = !isTeams ? rosterNames(r.ns_participant_id) : [];
+          const ewRoster = !isTeams ? rosterNames(r.ew_participant_id) : [];
+          const northName = r.player_n_name || nsRoster[0] || 'North';
+          const southName = r.player_s_name || nsRoster[1] || 'South';
+          const eastName = r.player_e_name || ewRoster[0] || 'East';
+          const westName = r.player_w_name || ewRoster[1] || 'West';
           const pct = pctVal(r, boardResults);
           const imps = impValue(r, isImpPairs);
           const scoreStr = r.score > 0 ? `+${r.score}` : `${r.score}`;
