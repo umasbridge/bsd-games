@@ -204,10 +204,27 @@ function PlayBoardRow({ row, isTeams, scoring, participantMap, boardResults, our
   // Board number, result and traveller must share the same canonical board id.
   // Never relabel filtered rows by their position in the deal set.
   const boardNumber = row.board.board_number;
+  const completedResult = playedResults?.[row.board.id] || null;
+  const boardCompleted = !!completedResult;
+  const isMpPairs = !isTeams && !String(scoring || '').toLowerCase().includes('imp');
+  const playedResultRows = Object.values(playedResults || {}).sort((a, b) => a.boardNumber - b.boardNumber);
+  const comparisonValues = playedResultRows
+    .map(played => isMpPairs ? played.mpPercent : played.imps)
+    .filter(value => value != null && Number.isFinite(Number(value)))
+    .map(Number);
+  const overallComparison = comparisonValues.length
+    ? (isMpPairs
+      ? Math.round((comparisonValues.reduce((sum, value) => sum + value, 0) / comparisonValues.length) * 10) / 10
+      : Math.round(comparisonValues.reduce((sum, value) => sum + value, 0) * 10) / 10)
+    : null;
 
   // Seat names belong to the result record. Do not infer seats from roster order:
   // a participant roster is not guaranteed to be ordered N/S or E/W.
   const selectedSide = direction === 'E' || direction === 'W' ? 'EW' : 'NS';
+  const travellerScores = boardResults
+    .map(travellerResult => Number(travellerResult?.score))
+    .filter(Number.isFinite)
+    .map(nsScore => selectedSide === 'NS' ? nsScore : -nsScore);
   // "My" score follows the side actually being played on this board. The
   // deal-set participant filter may name the opposing team in this room.
   const selectedParticipantId = selectedSide === 'NS'
@@ -233,8 +250,10 @@ function PlayBoardRow({ row, isTeams, scoring, participantMap, boardResults, our
     player_w_name: result.player_w_name || undefined,
     completion_user_side: selectedSide,
     completion_other_score: otherRoomScore,
-    completion_scoring: isTeams || String(scoring || '').toLowerCase().includes('imp') ? 'IMP' : null,
-  } : null, [result, selectedSide, otherRoomScore, isTeams, scoring]);
+    completion_scoring: isTeams || String(scoring || '').toLowerCase().includes('imp') ? 'IMP' : 'MP',
+    completion_traveller_scores: isTeams ? undefined : travellerScores,
+    completed_result: completedResult,
+  } : null, [result, selectedSide, otherRoomScore, isTeams, scoring, boardResults, completedResult]);
 
   return (
     <div className="relative">
@@ -247,7 +266,9 @@ function PlayBoardRow({ row, isTeams, scoring, participantMap, boardResults, our
         cardingNS={cardingNS}
         cardingEW={cardingEW}
         onComplete={(completion) => onBoardComplete?.(row.board.id, { boardNumber, ...completion })}
-        onTraveller={() => setPopup(popup === 'traveller' ? null : 'traveller')}
+        onTraveller={boardCompleted
+          ? () => setPopup(popup === 'traveller' ? null : 'traveller')
+          : undefined}
         onResults={() => setPopup(popup === 'results' ? null : 'results')}
       />
 
@@ -268,9 +289,9 @@ function PlayBoardRow({ row, isTeams, scoring, participantMap, boardResults, our
       {popup === 'results' && (
         <DraggablePlayPopup title="My Results" onClose={() => setPopup(null)} width={360}>
           {Object.keys(playedResults || {}).length === 0 ? <div style={{ color: '#6b7280', fontSize: '0.8rem' }}>No completed boards yet.</div> : (
-            <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.8rem' }}><thead><tr><th style={{ textAlign: 'left' }}>Board</th><th style={{ textAlign: 'left' }}>Result</th><th style={{ textAlign: 'right' }}>Score</th><th style={{ textAlign: 'right' }}>IMPs</th></tr></thead><tbody>
-              {Object.values(playedResults).sort((a, b) => a.boardNumber - b.boardNumber).map((r, i) => <tr key={i} style={{ borderTop: '1px solid #e5e7eb' }}><td>{r.boardNumber}</td><td>{r.level}<span style={{ color: r.denomCode === 'H' || r.denomCode === 'D' ? '#c0241c' : '#111' }}>{r.denomCode === 'N' ? 'NT' : ({ S: '♠', H: '♥', D: '♦', C: '♣' }[r.denomCode] || r.denomCode)}</span>{r.doubled || ''} {r.declarer} {r.resultText}</td><td style={{ textAlign: 'right' }}>{r.score > 0 ? '+' : ''}{r.score}</td><td style={{ textAlign: 'right' }}>{r.imps == null ? '—' : `${r.imps > 0 ? '+' : ''}${r.imps}`}</td></tr>)}
-            </tbody></table>
+            <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.8rem' }}><thead><tr><th style={{ textAlign: 'left' }}>Board</th><th style={{ textAlign: 'left' }}>Result</th><th style={{ textAlign: 'right' }}>Score</th><th style={{ textAlign: 'right' }}>{isMpPairs ? 'MP (%)' : 'IMPs'}</th></tr></thead><tbody>
+              {playedResultRows.map((r, i) => <tr key={i} style={{ borderTop: '1px solid #e5e7eb' }}><td>{r.boardNumber}</td><td>{r.level}<span style={{ color: r.denomCode === 'H' || r.denomCode === 'D' ? '#c0241c' : '#111' }}>{r.denomCode === 'N' ? 'NT' : ({ S: '♠', H: '♥', D: '♦', C: '♣' }[r.denomCode] || r.denomCode)}</span>{r.doubled || ''} {r.declarer} {r.resultText}</td><td style={{ textAlign: 'right' }}>{r.score > 0 ? '+' : ''}{r.score}</td><td style={{ textAlign: 'right' }}>{isMpPairs ? (r.mpPercent == null ? '—' : `${r.mpPercent}%`) : (r.imps == null ? '—' : `${r.imps > 0 ? '+' : ''}${r.imps}`)}</td></tr>)}
+            </tbody><tfoot><tr style={{ borderTop: '2px solid #cbd5e1', fontWeight: 700 }}><td colSpan={3}>Overall</td><td style={{ textAlign: 'right' }}>{overallComparison == null ? '—' : isMpPairs ? `${overallComparison}%` : `${overallComparison > 0 ? '+' : ''}${overallComparison}`}</td></tr></tfoot></table>
           )}
         </DraggablePlayPopup>
       )}
