@@ -11,9 +11,9 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.97.0",
-    "games-display": "file:../games-display",
-    "games-retrieval": "file:../games-retrieval",
-    "ips": "file:../ips",
+    "games-display": "github:umasbridge/games-display#master",
+    "games-retrieval": "github:umasbridge/games-retrieval#master",
+    "ips": "github:umasbridge/ips#main",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
