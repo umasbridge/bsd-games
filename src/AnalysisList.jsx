@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase as defaultSupabase } from './supabase.js';
 import { buildTeamRows, buildPairRows } from './AnalysisView.jsx';
-import { downloadLin, linHasPlay } from './linExport.js';
+import { downloadLin } from './linExport.js';
 
 export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAdmin, onNew, onRetrieve, onOpen, onCreateNew, onLogout, onBack, Header, ShareDialog, onPlay }) {
   const sb = sbProp || defaultSupabase;
@@ -11,39 +11,6 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
   const [downloading, setDownloading] = useState(null);
   const [pendingAnalysis, setPendingAnalysis] = useState(null);
   const [showSmartQuery, setShowSmartQuery] = useState(false);
-  const [playableByAnalysis, setPlayableByAnalysis] = useState({});
-
-  const analysisHasPlayableBoard = async (analysis) => {
-    const filters = analysis.filters || {};
-    let query = sb
-      .from('bg_board_results')
-      .select('lin')
-      .not('lin', 'is', null)
-      .ilike('lin', '%pc|%')
-      .limit(1000);
-
-    if (filters.board_ids?.length) {
-      query = query.in('board_id', filters.board_ids);
-    } else {
-      let stageIds = filters.stage_ids || (filters.stage_id ? [filters.stage_id] : []);
-      if (!stageIds.length && analysis.bg_events?.id) {
-        const { data: stages } = await sb
-          .from('bg_stages')
-          .select('id')
-          .eq('event_id', analysis.bg_events.id);
-        stageIds = (stages || []).map(stage => stage.id);
-      }
-      if (!stageIds.length) return false;
-      query = query.in('stage_id', stageIds);
-    }
-
-    const { data, error } = await query;
-    if (error) {
-      console.error('Playability check failed:', analysis.id, error);
-      return false;
-    }
-    return (data || []).some(result => linHasPlay(result.lin));
-  };
 
   const fetchAnalyses = async () => {
     try {
@@ -59,11 +26,6 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
       if (error) console.error('Analyses fetch error:', error);
       const loaded = data || [];
       setAnalyses(loaded);
-      const checks = await Promise.all(loaded.map(async analysis => [
-        analysis.id,
-        await analysisHasPlayableBoard(analysis),
-      ]));
-      setPlayableByAnalysis(Object.fromEntries(checks));
     } catch (e) {
       console.error('fetchAnalyses error:', e);
     } finally {
@@ -143,14 +105,12 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
                     >
                       View
                     </button>
-                    {playableByAnalysis[a.id] && (
-                      <button
-                        onClick={() => setPendingAnalysis(a)}
-                        className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700"
-                      >
-                        Play
-                      </button>
-                    )}
+                    <button
+                      onClick={() => setPendingAnalysis(a)}
+                      className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700"
+                    >
+                      Play
+                    </button>
                     {owner && (
                       <>
                         <button
