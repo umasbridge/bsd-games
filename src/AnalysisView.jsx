@@ -188,6 +188,8 @@ export default function AnalysisView({ supabase: sbProp, analysis, userId, onBac
     }
   }, [boards, results, filters, isTeams]);
 
+  const effectiveIsTeams = isTeams || normalizedRows.some(r => r.otherRoom != null);
+
   const displayBoards = useMemo(() => {
     const matchKeySet = filters.match_keys?.length ? new Set(filters.match_keys) : null;
     return normalizedRows.map(row => {
@@ -239,12 +241,63 @@ export default function AnalysisView({ supabase: sbProp, analysis, userId, onBac
           <div className="p-8 text-center text-gray-400">
             No boards match the selected filters.
           </div>
+        ) : displayBoards.some(db => db.matchOpponentId) ? (
+          (() => {
+            // Multi-match teams event: group consecutive boards by opponent
+            const groups = [];
+            for (const db of displayBoards) {
+              const oppId = db.matchOpponentId;
+              if (!groups.length || groups[groups.length - 1].oppId !== oppId) {
+                groups.push({ oppId, boards: [] });
+              }
+              groups[groups.length - 1].boards.push(db);
+            }
+            return groups.map((group, gi) => {
+              const rawName = participantMap[group.oppId]?.name || '';
+              const oppName = rawName.replace(/\s*&\s*$/, '').trim();
+              const totalImps = group.boards.reduce((sum, db) => sum + (db.ourImps ?? 0), 0);
+              const impsStr = totalImps > 0 ? `+${totalImps}` : `${totalImps}`;
+              const impsColor = totalImps > 0 ? '#15803d' : totalImps < 0 ? '#dc2626' : '#6b7280';
+              return (
+                <div key={`${group.oppId ?? ''}_${gi}`}>
+                  <div style={{ background: '#f1f5f9', borderLeft: '3px solid #3b82f6', padding: '5px 10px', marginBottom: 2, marginTop: gi > 0 ? 8 : 0, display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <span style={{ fontWeight: 700, fontSize: '0.82rem' }}>
+                      Match {gi + 1}{oppName ? ` — vs ${oppName}` : ''}
+                    </span>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 600, color: impsColor }}>
+                      {impsStr} IMPs
+                    </span>
+                  </div>
+                  {group.boards.map(displayBoard => (
+                    <BoardView
+                      key={`${displayBoard.board?.id}:${displayBoard.result?.id}`}
+                      displayBoard={displayBoard}
+                      isTeams={effectiveIsTeams}
+                      scoring={eventScoring}
+                      participantMap={participantMap}
+                      ensureParticipants={ensureParticipants}
+                      highlightParticipantId={filters.participant_id}
+                      ourParticipantId={filters.participant_id}
+                      supabase={supabase}
+                      userId={userId}
+                      analysisId={analysis.id}
+                      analysisName={analysis.name}
+                      sharedWith={filters.shared_with}
+                      DiscussionView={DiscussionView}
+                      notesUnread={notesUnread[displayBoard.board?.id] || 0}
+                      onNotesRead={() => setNotesUnread(m => ({ ...m, [displayBoard.board?.id]: 0 }))}
+                    />
+                  ))}
+                </div>
+              );
+            });
+          })()
         ) : (
           displayBoards.map(displayBoard => (
             <BoardView
               key={`${displayBoard.board?.id}:${displayBoard.result?.id}`}
               displayBoard={displayBoard}
-              isTeams={isTeams}
+              isTeams={effectiveIsTeams}
               scoring={eventScoring}
               participantMap={participantMap}
               ensureParticipants={ensureParticipants}
@@ -412,7 +465,8 @@ export function buildTeamRows(boards, results, filters) {
   // renumbering the remaining rows 1..N makes the board heading disagree with
   // its result, LIN and traveller.
   for (const row of rows) {
-    row.displayBoardNumber = row.board?.board_number ?? null;
+    const b = row.board;
+    row.displayBoardNumber = b?.round != null ? `R${b.round}B${b.board_number}` : (b?.board_number ?? null);
   }
 
   return rows;
@@ -492,15 +546,66 @@ export function buildPairRows(boards, results, filters) {
     return ba - bb;
   });
 
-  return filtered.map((r, i) => {
+  const rows = filtered.map(r => {
     const board = boardMap[r.board_id];
     return {
       board,
       result: r,
       otherRoom: null,
-      displayBoardNumber: board?.board_number ?? null,
+      displayBoardNumber: board?.round != null ? `R${board.round}B${board.board_number}` : (board?.board_number ?? null),
     };
   });
+
+  // Detect BridgeWebs teams-in-pairs: same physical board played in opposite directions
+  // against the same opponent → treat as Open/Closed rooms of the same match.
+  // Group by (round, board_number) so multi-round events don't collide on board number alone.
+  if (pid) {
+    const byBN = {};
+    for (const db of rows) {
+      const bn = db.board?.board_number;
+      const rnd = db.board?.round;
+      if (bn == null) continue;
+      const key = rnd != null ? `${rnd}:${bn}` : `${bn}`;
+      (byBN[key] = byBN[key] || []).push(db);
+    }
+
+    const pairedRows = [];
+    let anyPaired = false;
+
+    for (const dbs of Object.values(byBN)) {
+      if (dbs.length === 2) {
+        const [a, b] = dbs;
+        const aSide = a.result?.ns_participant_id === pid ? 'ns' : 'ew';
+        const bSide = b.result?.ns_participant_id === pid ? 'ns' : 'ew';
+        const aOpp = aSide === 'ns' ? a.result?.ew_participant_id : a.result?.ns_participant_id;
+        const bOpp = bSide === 'ns' ? b.result?.ew_participant_id : b.result?.ns_participant_id;
+
+        if (aSide !== bSide && aOpp === bOpp) {
+          anyPaired = true;
+          const nsDb = aSide === 'ns' ? a : b;
+          const ewDb = aSide === 'ew' ? a : b;
+          const nsScore = nsDb.result?.score || 0;
+          // ewDb.result.score is the opponent's NS score — negate to get our EW perspective
+          const ewScore = ewDb.result?.score || 0;
+          const ourImps = scoreToImps(nsScore - ewScore);
+          pairedRows.push({
+            board: nsDb.board,
+            result: nsDb.result,
+            otherRoom: ewDb.result,
+            ourImps,
+            matchOpponentId: aOpp,
+            displayBoardNumber: nsDb.board?.board_number ?? null,
+          });
+          continue;
+        }
+      }
+      for (const db of dbs) pairedRows.push(db);
+    }
+
+    if (anyPaired) return pairedRows;
+  }
+
+  return rows;
 }
 
 
@@ -883,6 +988,54 @@ function isGameContract(level, denom) {
   return pts >= 100;
 }
 
+function renderTeamsPanels(pairs, roomPanel, highlightParticipantId, participantMap) {
+  const signed = (n) => n == null ? '—' : n > 0 ? `+${n}` : `${n}`;
+  const impLine = (name, imps, pid) => {
+    const isOurs = highlightParticipantId && pid === highlightParticipantId;
+    return (
+      <div className={`flex items-center justify-between gap-3 py-0.5 ${isOurs ? 'font-bold' : ''}`}>
+        <span className="text-gray-700 truncate max-w-[110px]">{name}</span>
+        <span className={`font-mono tabular-nums ${imps > 0 ? 'text-green-700' : imps < 0 ? 'text-red-600' : 'text-gray-500'}`}>{signed(imps)}</span>
+      </div>
+    );
+  };
+  return (
+    <table className="text-xs" style={{ borderCollapse: 'collapse', width: 'auto' }}>
+      <thead><tr className="border-b border-gray-300 text-gray-600 bg-gray-50">
+        <th className="py-1.5 px-3 text-left">Closed Room</th>
+        <th className="py-1.5 px-3 text-left border-l border-gray-200">Open Room</th>
+        <th className="py-1.5 px-3 text-left border-l border-gray-200">IMPs</th>
+      </tr></thead>
+      <tbody>{pairs.map((pair, index) => {
+        const c = pair.closed; const o = pair.open;
+        const openNsScore = o?.score != null ? Number(o.score) : null;
+        const closedNsScore = c?.score != null ? Number(c.score) : null;
+        const openNsSwing = openNsScore != null && closedNsScore != null ? openNsScore - closedNsScore : null;
+        const openNsImps = openNsSwing != null ? scoreToImps(openNsSwing) : null;
+        const closedNsImps = openNsImps != null ? -openNsImps : null;
+        const openNsId = o?.ns_participant_id;
+        const closedNsId = c?.ns_participant_id;
+        const openNsName = (participantMap[openNsId]?.name || 'Open NS').replace(/\s*&\s*$/, '').trim();
+        const closedNsName = (participantMap[closedNsId]?.name || 'Closed NS').replace(/\s*&\s*$/, '').trim();
+        const pairInvolvesUs = highlightParticipantId && (
+          o?.ns_participant_id === highlightParticipantId || o?.ew_participant_id === highlightParticipantId ||
+          c?.ns_participant_id === highlightParticipantId || c?.ew_participant_id === highlightParticipantId
+        );
+        return <tr key={index} className={pairInvolvesUs ? 'bg-blue-50' : ''}>
+          <td className="py-2 px-3 align-top border-b border-gray-200">{roomPanel(c)}</td>
+          <td className="py-2 px-3 align-top border-l border-b border-gray-200">{roomPanel(o)}</td>
+          <td className="py-2 px-3 align-top border-l border-b border-gray-200 min-w-[160px]">
+            <div className="min-h-[112px] flex flex-col justify-center gap-1">
+              {impLine(openNsName, openNsImps, openNsId)}
+              {impLine(closedNsName, closedNsImps, closedNsId)}
+            </div>
+          </td>
+        </tr>;
+      })}</tbody>
+    </table>
+  );
+}
+
 export function TravellerTable({ board, boardResults, participantMap, highlightParticipantId, isTeams, scoring }) {
   const [sortKey, setSortKey] = useState('ns');
   const [sortAsc, setSortAsc] = useState(true);
@@ -954,7 +1107,8 @@ export function TravellerTable({ board, boardResults, participantMap, highlightP
     return roster.map(player => typeof player === 'string' ? player : player?.name).filter(Boolean);
   };
 
-  if (isTeams) {
+  const hasTeamsStructure = boardResults.some(r => r.room != null || r.match_id != null);
+  if (isTeams && hasTeamsStructure) {
     const grouped = new Map();
     for (const r of boardResults) {
       const key = `${r.match_id || ''}__${r.round || ''}`;
@@ -1013,55 +1167,95 @@ export function TravellerTable({ board, boardResults, participantMap, highlightP
       </div>;
     };
 
-    return <>
-      <table className="text-xs" style={{ borderCollapse: 'collapse', width: 'auto' }}>
-        <thead><tr className="border-b border-gray-300 text-gray-600 bg-gray-50">
-          <th className="py-1.5 px-3 text-left">Closed Room</th>
-          <th className="py-1.5 px-3 text-left border-l border-gray-200">Open Room</th>
-          <th className="py-1.5 px-3 text-left border-l border-gray-200">IMPs</th>
-        </tr></thead>
-        <tbody>{pairs.map((pair, index) => {
-          const c = pair.closed; const o = pair.open;
-          // Compute swing directly from both rooms' NS-perspective scores.
-          // open NS team swing = open.score − closed.score (they play NS in open, EW in closed)
-          // closed NS team swing = −open NS swing (mirror)
-          const openNsScore = o?.score != null ? Number(o.score) : null;
-          const closedNsScore = c?.score != null ? Number(c.score) : null;
-          const openNsSwing = openNsScore != null && closedNsScore != null ? openNsScore - closedNsScore : null;
-          const openNsImps = openNsSwing != null ? scoreToImps(openNsSwing) : null;
-          const closedNsImps = openNsImps != null ? -openNsImps : null;
-          const openNsId = o?.ns_participant_id;
-          const closedNsId = c?.ns_participant_id;
-          const openNsName = participantMap[openNsId]?.name || 'Open NS';
-          const closedNsName = participantMap[closedNsId]?.name || 'Closed NS';
-          const pairInvolvesUs = highlightParticipantId && (
-            o?.ns_participant_id === highlightParticipantId || o?.ew_participant_id === highlightParticipantId ||
-            c?.ns_participant_id === highlightParticipantId || c?.ew_participant_id === highlightParticipantId
-          );
-          const signed = (n) => n == null ? '—' : n > 0 ? `+${n}` : `${n}`;
-          const impLine = (name, imps, pid) => {
-            const isOurs = highlightParticipantId && pid === highlightParticipantId;
-            return (
-              <div className={`flex items-center justify-between gap-3 py-0.5 ${isOurs ? 'font-bold' : ''}`}>
-                <span className="text-gray-700 truncate max-w-[110px]">{name}</span>
-                <span className={`font-mono tabular-nums ${imps > 0 ? 'text-green-700' : imps < 0 ? 'text-red-600' : 'text-gray-500'}`}>{signed(imps)}</span>
-              </div>
-            );
-          };
-          return <tr key={index} className={pairInvolvesUs ? 'bg-blue-50' : ''}>
-            <td className="py-2 px-3 align-top border-b border-gray-200">{roomPanel(c)}</td>
-            <td className="py-2 px-3 align-top border-l border-b border-gray-200">{roomPanel(o)}</td>
-            <td className="py-2 px-3 align-top border-l border-b border-gray-200 min-w-[160px]">
-              <div className="min-h-[112px] flex flex-col justify-center gap-1">
-                {impLine(openNsName, openNsImps, openNsId)}
-                {impLine(closedNsName, closedNsImps, closedNsId)}
-              </div>
-            </td>
-          </tr>;
-        })}</tbody>
-      </table>
-      {overlay}
-    </>;
+    return <>{renderTeamsPanels(pairs, roomPanel, highlightParticipantId, participantMap)}{overlay}</>;
+  }
+
+  if (isTeams && !hasTeamsStructure) {
+    // BridgeWebs teams-in-pairs: pair results by matching participant sets
+    const byPair = new Map();
+    for (const r of boardResults) {
+      const key = [r.ns_participant_id, r.ew_participant_id].sort().join('__');
+      if (!byPair.has(key)) byPair.set(key, []);
+      byPair.get(key).push(r);
+    }
+
+    const pairs = [];
+    for (const results of byPair.values()) {
+      if (results.length === 2) {
+        const [a, b] = results;
+        // "Our" room = where highlightParticipantId is NS; otherwise arbitrary
+        let open, closed;
+        if (highlightParticipantId) {
+          open = a.ns_participant_id === highlightParticipantId ? a : b;
+          closed = open === a ? b : a;
+        } else {
+          open = a.ns_participant_id <= b.ns_participant_id ? a : b;
+          closed = open === a ? b : a;
+        }
+        pairs.push({ open, closed });
+      } else {
+        pairs.push({ open: results[0], closed: null });
+      }
+    }
+
+    // Our match row first
+    pairs.sort((a, b) => {
+      const aOurs = highlightParticipantId && (
+        a.open?.ns_participant_id === highlightParticipantId || a.open?.ew_participant_id === highlightParticipantId ||
+        a.closed?.ns_participant_id === highlightParticipantId || a.closed?.ew_participant_id === highlightParticipantId
+      );
+      const bOurs = highlightParticipantId && (
+        b.open?.ns_participant_id === highlightParticipantId || b.open?.ew_participant_id === highlightParticipantId ||
+        b.closed?.ns_participant_id === highlightParticipantId || b.closed?.ew_participant_id === highlightParticipantId
+      );
+      return (aOurs ? 0 : 1) - (bOurs ? 0 : 1);
+    });
+
+    const seatCell2 = (r, side) => {
+      if (!r) return <span className="text-gray-300">—</span>;
+      const pid = side === 'NS' ? r.ns_participant_id : r.ew_participant_id;
+      const team = participantMap[pid]?.name || '—';
+      const players = side === 'NS'
+        ? [r.player_n_name || 'North', r.player_s_name || 'South']
+        : [r.player_e_name || 'East', r.player_w_name || 'West'];
+      return <><div className="font-semibold">{team}</div><div className="text-gray-500">{players.join(' · ')}</div></>;
+    };
+    const contractCell2 = (r) => r ? (r.passed_out ? 'Pass' : <>{r.contract_level}<span style={{ color: suitColor(r.contract_denom) }}>{SUIT_SYMBOLS_T[r.contract_denom] || r.contract_denom}</span>{r.contract_x || ''} <span className="text-gray-400">{r.declarer}</span></>) : '—';
+    const leadCell2 = (r) => r?.lead_suit ? <><span style={{ color: suitColor(r.lead_suit) }}>{SUIT_SYMBOLS_T[r.lead_suit]}</span>{r.lead_rank}</> : '—';
+    const overlay2 = viewResult && (
+      <div style={{ position: 'fixed', inset: 0, zIndex: 80, background: 'rgba(0,0,0,0.3)' }} onClick={() => setViewResult(null)}>
+        <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 'max-content', maxWidth: 'calc(100vw - 16px)', background: '#fff', boxShadow: '-4px 0 20px rgba(0,0,0,0.18)', overflow: 'auto' }} onClick={e => e.stopPropagation()}>
+          <div style={{ position: 'sticky', top: 0, zIndex: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px', borderBottom: '1px solid #e5e7eb', background: '#fff' }}>
+            <span style={{ fontWeight: 700, fontSize: '0.875rem' }}>Board {board.board_number} — View</span>
+            <button type="button" onClick={() => setViewResult(null)} style={{ border: 'none', background: 'none', color: '#6b7280', cursor: 'pointer', fontSize: '1.25rem', lineHeight: 1 }}>&times;</button>
+          </div>
+          <div style={{ padding: 16 }}><HandDiagram board={board} result={viewResult} participantMap={participantMap} isTeams /></div>
+        </div>
+      </div>
+    );
+    const roomPanel2 = (r) => {
+      if (!r) return <div className="text-gray-300 p-2">No result</div>;
+      const score = Number(r.score || 0);
+      const scoreSide = score > 0 ? 'NS' : score < 0 ? 'EW' : '';
+      const canView = linHasPlay(r.lin) || linHasBidding(r.lin);
+      return <div className="min-w-[225px]">
+        <div className="grid grid-cols-[26px_1fr] gap-x-2 gap-y-1">
+          <div className="font-semibold text-gray-500">NS</div><div>{seatCell2(r, 'NS')}</div>
+          <div className="font-semibold text-gray-500 border-t border-gray-100 pt-1">EW</div><div className="border-t border-gray-100 pt-1">{seatCell2(r, 'EW')}</div>
+        </div>
+        <div className="mt-2 pt-2 border-t border-gray-200 flex items-center gap-3 whitespace-nowrap">
+          <span><span className="text-gray-400">Contract </span>{contractCell2(r)}</span>
+          <span><span className="text-gray-400">Tricks </span>{r.tricks ?? '—'}</span>
+          <span><span className="text-gray-400">Lead </span>{leadCell2(r)}</span>
+        </div>
+        <div className="mt-1 flex items-center gap-3">
+          <span className="font-semibold"><span className="text-gray-400 font-normal">Score </span>{scoreSide} {score === 0 ? '0' : `+${Math.abs(score)}`}</span>
+          {canView && <button onClick={() => setViewResult(r)} className="px-2 py-0.5 rounded bg-emerald-600 text-white">View</button>}
+        </div>
+      </div>;
+    };
+
+    return <>{renderTeamsPanels(pairs, roomPanel2, highlightParticipantId, participantMap)}{overlay2}</>;
   }
 
   return (
