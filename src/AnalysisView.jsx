@@ -182,10 +182,12 @@ export default function AnalysisView({ supabase: sbProp, analysis, userId, onBac
     if (!boards.length || !results.length) return [];
 
     if (isTeams) {
-      return buildTeamRows(boards, results, filters);
-    } else {
-      return buildPairRows(boards, results, filters);
+      const teamRows = buildTeamRows(boards, results, filters);
+      // BridgeWebs teams-in-pairs events have type='teams' but no match_id/room fields.
+      // Fall back to pair-row pairing so they display correctly.
+      if (teamRows.length > 0) return teamRows;
     }
+    return buildPairRows(boards, results, filters);
   }, [boards, results, filters, isTeams]);
 
   const effectiveIsTeams = isTeams || normalizedRows.some(r => r.otherRoom != null);
