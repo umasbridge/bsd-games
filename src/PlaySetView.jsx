@@ -9,6 +9,36 @@ function normalizeLinForIps(lin) {
   return lin.replace(/mb\|ap\|/gi, 'mb|p|mb|p|mb|p|');
 }
 
+function participantRosterNames(participantMap, participantId) {
+  let roster = participantMap?.[participantId]?.roster;
+  if (typeof roster === 'string') {
+    try { roster = JSON.parse(roster); } catch { roster = []; }
+  }
+  if (!Array.isArray(roster)) return [];
+  return roster
+    .map(player => typeof player === 'string' ? player : player?.name)
+    .filter(Boolean);
+}
+
+function dedupeTrailingLastName(name) {
+  if (!name) return name;
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2 && parts[parts.length - 1].toLowerCase() === parts[parts.length - 2].toLowerCase()) {
+    return parts.slice(0, -1).join(' ');
+  }
+  return name;
+}
+
+function getPlayerDirection(result, playerName) {
+  if (!playerName || !result) return null;
+  const name = dedupeTrailingLastName(playerName).toLowerCase().trim();
+  for (const dir of ['N', 'S', 'E', 'W']) {
+    const rName = dedupeTrailingLastName(result[`player_${dir.toLowerCase()}_name`] || '').toLowerCase().trim();
+    if (rName && rName === name) return dir;
+  }
+  return null;
+}
+
 // ── Main PlaySetView ──────────────────────────────────────────────────────────
 
 export default function PlaySetView({ supabase: sbProp, playSet, userId, onBack, DiscussionView }) {
@@ -16,6 +46,7 @@ export default function PlaySetView({ supabase: sbProp, playSet, userId, onBack,
   const direction = playSet.direction || null;
   const cardingNS = playSet.cardingNS || 'UDCA';
   const cardingEW = playSet.cardingEW || 'UDCA';
+  const [selectedPlayer, setSelectedPlayer] = useState(playSet.player || null);
 
   const analysis = playSet.analysis;
   const [boards, setBoards] = useState([]);
@@ -91,6 +122,11 @@ export default function PlaySetView({ supabase: sbProp, playSet, userId, onBack,
     return m;
   }, [participants]);
 
+  const ourRoster = useMemo(() => {
+    if (!filters.participant_id) return [];
+    return participantRosterNames(participantMap, filters.participant_id);
+  }, [filters.participant_id, participantMap]);
+
   const resultsByBoard = useMemo(() => {
     const m = {};
     for (const r of results) {
@@ -140,7 +176,19 @@ export default function PlaySetView({ supabase: sbProp, playSet, userId, onBack,
           <h1 className="text-sm font-bold truncate">{playSet.name}</h1>
           <p className="text-xs text-gray-500">
             {tournament?.name}
-            {direction && <span className="ml-2 font-medium text-blue-600">Playing {direction}</span>}
+            {selectedPlayer ? (
+              <>
+                <span className="ml-2 font-medium text-blue-600">Playing as {selectedPlayer}</span>
+                <button
+                  onClick={() => setSelectedPlayer(null)}
+                  className="ml-2 text-xs text-gray-400 underline"
+                >
+                  Change
+                </button>
+              </>
+            ) : direction ? (
+              <span className="ml-2 font-medium text-blue-600">Playing {direction}</span>
+            ) : null}
           </p>
         </div>
         {displayRows.length > 0 && (
@@ -167,7 +215,29 @@ export default function PlaySetView({ supabase: sbProp, playSet, userId, onBack,
       </div>
 
       <div className="px-2 py-2">
-        {displayRows.length === 0 ? (
+        {!direction && ourRoster.length > 0 && !selectedPlayer ? (
+          <div style={{ padding: '40px 16px', textAlign: 'center' }}>
+            <div style={{ fontWeight: 700, fontSize: '1rem', marginBottom: 12, color: '#1f2937' }}>
+              {isTeams ? 'Choose your player' : 'Choose your player'}
+            </div>
+            <div style={{ color: '#6b7280', fontSize: '0.85rem', marginBottom: 20 }}>
+              {isTeams
+                ? 'Select which team member you are playing as:'
+                : 'Select which player in the pair you are:'}
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'center' }}>
+              {ourRoster.map(player => (
+                <button
+                  key={player}
+                  onClick={() => setSelectedPlayer(player)}
+                  style={{ padding: '10px 24px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600 }}
+                >
+                  {player}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : displayRows.length === 0 ? (
           <div className="p-8 text-center text-gray-400">No boards match the selected filters.</div>
         ) : row ? (
           displayRows.map((candidate, index) => visitedIdxs.has(index) ? (
@@ -180,6 +250,7 @@ export default function PlaySetView({ supabase: sbProp, playSet, userId, onBack,
                 boardResults={resultsByBoard[candidate.board?.id] || []}
                 ourParticipantId={filters.participant_id}
                 direction={direction}
+                selectedPlayer={selectedPlayer}
                 cardingNS={cardingNS}
                 cardingEW={cardingEW}
                 playedResults={playedResults}
@@ -195,8 +266,9 @@ export default function PlaySetView({ supabase: sbProp, playSet, userId, onBack,
 
 // ── PlayBoardRow ──────────────────────────────────────────────────────────────
 
-function PlayBoardRow({ row, isTeams, scoring, participantMap, boardResults, ourParticipantId, direction, cardingNS, cardingEW, playedResults, onBoardComplete }) {
+function PlayBoardRow({ row, isTeams, scoring, participantMap, boardResults, ourParticipantId, direction, selectedPlayer, cardingNS, cardingEW, playedResults, onBoardComplete }) {
   const [popup, setPopup] = useState(null);
+  const [boardMode, setBoardMode] = useState('play');
 
   if (!row.board) return null;
 
@@ -218,9 +290,23 @@ function PlayBoardRow({ row, isTeams, scoring, participantMap, boardResults, our
       : Math.round(comparisonValues.reduce((sum, value) => sum + value, 0) * 10) / 10)
     : null;
 
+  // When a player is selected, derive their seat from this board's result.
+  // Falls back to the participant's side on this board if the player didn't play it.
+  const boardDirection = useMemo(() => {
+    if (selectedPlayer && result) {
+      const d = getPlayerDirection(result, selectedPlayer);
+      if (d) return d;
+      if (ourParticipantId) {
+        if (result.ns_participant_id === ourParticipantId) return 'N';
+        if (result.ew_participant_id === ourParticipantId) return 'E';
+      }
+    }
+    return direction || null;
+  }, [selectedPlayer, result, direction, ourParticipantId]);
+
   // Seat names belong to the result record. Do not infer seats from roster order:
   // a participant roster is not guaranteed to be ordered N/S or E/W.
-  const selectedSide = direction === 'E' || direction === 'W' ? 'EW' : 'NS';
+  const selectedSide = boardDirection === 'E' || boardDirection === 'W' ? 'EW' : 'NS';
   const travellerScores = boardResults
     .map(travellerResult => Number(travellerResult?.score))
     .filter(Number.isFinite)
@@ -238,22 +324,27 @@ function PlayBoardRow({ row, isTeams, scoring, participantMap, boardResults, our
         ? -Number(otherRoom.score || 0)
         : null)
     : null;
+  // Older pairs imports stored player names in the ordered pair rosters rather
+  // than on every board-result row. That ordering is valid for pairs, but not
+  // for team rosters, so keep the fallback deliberately pairs-only.
+  const nsRoster = !isTeams ? participantRosterNames(participantMap, result?.ns_participant_id) : [];
+  const ewRoster = !isTeams ? participantRosterNames(participantMap, result?.ew_participant_id) : [];
   // Keep the mounted IPS deal stable when Results history changes. Recreating
   // this object on completion makes IpsPlayer treat it as a different deal and
   // clears the final Result / Score / IMPs display immediately.
   const boardResult = useMemo(() => result ? {
     ...result,
     lin: normalizeLinForIps(result.lin),
-    player_n_name: result.player_n_name || undefined,
-    player_s_name: result.player_s_name || undefined,
-    player_e_name: result.player_e_name || undefined,
-    player_w_name: result.player_w_name || undefined,
+    player_n_name: result.player_n_name || nsRoster[0] || undefined,
+    player_s_name: result.player_s_name || nsRoster[1] || undefined,
+    player_e_name: result.player_e_name || ewRoster[0] || undefined,
+    player_w_name: result.player_w_name || ewRoster[1] || undefined,
     completion_user_side: selectedSide,
     completion_other_score: otherRoomScore,
     completion_scoring: isTeams || String(scoring || '').toLowerCase().includes('imp') ? 'IMP' : 'MP',
     completion_traveller_scores: isTeams ? undefined : travellerScores,
     completed_result: completedResult,
-  } : null, [result, selectedSide, otherRoomScore, isTeams, scoring, boardResults, completedResult]);
+  } : null, [result, selectedSide, otherRoomScore, isTeams, scoring, boardResults, completedResult, participantMap]);
 
   return (
     <div className="relative">
@@ -262,14 +353,21 @@ function PlayBoardRow({ row, isTeams, scoring, participantMap, boardResults, our
         boardResult={boardResult}
         nsTeamName={isTeams ? participantMap?.[result?.ns_participant_id]?.name : undefined}
         ewTeamName={isTeams ? participantMap?.[result?.ew_participant_id]?.name : undefined}
-        direction={direction}
+        direction={boardDirection}
         cardingNS={cardingNS}
         cardingEW={cardingEW}
-        onComplete={(completion) => onBoardComplete?.(row.board.id, { boardNumber, ...completion })}
+        mode={boardMode}
+        onComplete={(completion) => {
+          onBoardComplete?.(row.board.id, { boardNumber, ...completion });
+          setBoardMode('view');
+        }}
         onTraveller={boardCompleted
           ? () => setPopup(popup === 'traveller' ? null : 'traveller')
           : undefined}
         onResults={() => setPopup(popup === 'results' ? null : 'results')}
+        onPlay={boardMode === 'view' || boardMode === 'dd-play'
+          ? () => setBoardMode(boardMode === 'view' ? 'dd-play' : 'view')
+          : undefined}
       />
 
       {/* Traveller popup */}

@@ -11,6 +11,8 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
   const [downloading, setDownloading] = useState(null);
   const [pendingAnalysis, setPendingAnalysis] = useState(null);
   const [showSmartQuery, setShowSmartQuery] = useState(false);
+  const [openMoreId, setOpenMoreId] = useState(null);
+  const [changePairAnalysis, setChangePairAnalysis] = useState(null);
 
   const fetchAnalyses = async () => {
     try {
@@ -34,6 +36,13 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
   };
 
   useEffect(() => { fetchAnalyses(); }, []);
+
+  useEffect(() => {
+    if (!openMoreId) return;
+    const close = () => setOpenMoreId(null);
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, [openMoreId]);
 
   const handleDelete = async (analysis) => {
     if (!confirm(`Delete "${analysis.name}"? This cannot be undone.`)) return;
@@ -98,7 +107,7 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
                   <div>
                     <p className="font-medium text-gray-800">{a.name}</p>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 items-center flex-wrap">
                     <button
                       onClick={() => onOpen(a)}
                       className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
@@ -112,32 +121,54 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
                       Play
                     </button>
                     {owner && (
-                      <>
+                      <button
+                        onClick={() => setChangePairAnalysis(a)}
+                        className="px-3 py-1 border border-gray-200 rounded text-sm text-indigo-600 hover:bg-indigo-50"
+                      >
+                        {ev?.type === 'teams' ? 'Change Team' : 'Change Pair'}
+                      </button>
+                    )}
+                    {owner && (
+                      <div style={{ position: 'relative' }}>
                         <button
-                          onClick={() => setSharingAnalysis(a)}
-                          className="px-3 py-1 border border-gray-200 rounded text-sm text-blue-600 hover:bg-blue-50"
+                          onClick={(e) => { e.stopPropagation(); setOpenMoreId(openMoreId === a.id ? null : a.id); }}
+                          className="px-3 py-1 border border-gray-200 rounded text-sm text-gray-600 hover:bg-gray-50"
                         >
-                          Share
+                          More ▾
                         </button>
-                        <button
-                          onClick={async () => {
-                            setDownloading(a.id);
-                            try { await downloadLin(sb, a); }
-                            catch (e) { console.error('LIN download failed:', e); }
-                            setDownloading(null);
-                          }}
-                          disabled={downloading === a.id}
-                          className="px-3 py-1 border border-gray-200 rounded text-sm text-blue-600 hover:bg-blue-50 disabled:text-gray-400"
-                        >
-                          {downloading === a.id ? '...' : 'LIN'}
-                        </button>
-                        <button
-                          onClick={() => handleDelete(a)}
-                          className="px-3 py-1 border border-gray-200 rounded text-sm text-red-600 hover:bg-red-50"
-                        >
-                          Delete
-                        </button>
-                      </>
+                        {openMoreId === a.id && (
+                          <div
+                            onClick={e => e.stopPropagation()}
+                            style={{ position: 'absolute', top: 'calc(100% + 4px)', right: 0, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 20, minWidth: 110, overflow: 'hidden' }}
+                          >
+                            <button
+                              onClick={() => { setSharingAnalysis(a); setOpenMoreId(null); }}
+                              className="block w-full text-left px-4 py-2 text-sm text-blue-600 hover:bg-blue-50"
+                            >
+                              Share
+                            </button>
+                            <button
+                              onClick={async () => {
+                                setOpenMoreId(null);
+                                setDownloading(a.id);
+                                try { await downloadLin(sb, a); }
+                                catch (e) { console.error('LIN download failed:', e); }
+                                setDownloading(null);
+                              }}
+                              disabled={downloading === a.id}
+                              className="block w-full text-left px-4 py-2 text-sm text-blue-600 hover:bg-blue-50 disabled:text-gray-400"
+                            >
+                              {downloading === a.id ? '...' : 'LIN'}
+                            </button>
+                            <button
+                              onClick={() => { setOpenMoreId(null); handleDelete(a); }}
+                              className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>
@@ -148,9 +179,12 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
       </div>
 
       {pendingAnalysis && (
-        <DirectionPickerDialog
-          onPick={({ direction, cardingNS, cardingEW }) => {
-            onPlay({ name: pendingAnalysis.name, analysis: pendingAnalysis, direction, cardingNS, cardingEW });
+        <PlayerPickerDialog
+          analysis={pendingAnalysis}
+          supabase={sb}
+          isTeams={pendingAnalysis.bg_events?.type === 'teams'}
+          onPick={({ player, direction, cardingNS, cardingEW }) => {
+            onPlay({ name: pendingAnalysis.name, analysis: pendingAnalysis, player, direction, cardingNS, cardingEW });
             setPendingAnalysis(null);
           }}
           onClose={() => setPendingAnalysis(null)}
@@ -173,6 +207,18 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
         />
       ))}
 
+      {changePairAnalysis && (
+        <ChangePairModal
+          analysis={changePairAnalysis}
+          supabase={sb}
+          onSave={(updated) => {
+            setAnalyses(prev => prev.map(a => a.id === updated.id ? updated : a));
+            setChangePairAnalysis(null);
+          }}
+          onClose={() => setChangePairAnalysis(null)}
+        />
+      )}
+
       {showSmartQuery && (
         <SmartQueryDialog
           supabase={sb}
@@ -184,6 +230,199 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
           }}
         />
       )}
+    </div>
+  );
+}
+
+
+function ChangePairModal({ analysis, supabase, onSave, onClose }) {
+  const [participants, setParticipants] = useState(null);
+  const [selected, setSelected] = useState(analysis.filters?.participant_id || null);
+  const [saving, setSaving] = useState(false);
+  const isTeams = analysis.bg_events?.type === 'teams';
+  const eventId = analysis.bg_events?.id;
+
+  useEffect(() => {
+    if (!eventId) { setParticipants([]); return; }
+    supabase.from('bg_participants').select('id, number, name').eq('event_id', eventId).order('number')
+      .then(({ data }) => setParticipants(data || []));
+  }, [eventId]);
+
+  const currentId = analysis.filters?.participant_id || null;
+
+  const handleSave = async () => {
+    setSaving(true);
+    const newFilters = { ...analysis.filters, participant_id: selected };
+    await supabase.from('bsd_game_analyses').update({ filters: newFilters }).eq('id', analysis.id);
+    onSave({ ...analysis, filters: newFilters });
+  };
+
+  const sortedParticipants = participants
+    ? [...participants].sort((a, b) => (b.id === currentId ? 1 : 0) - (a.id === currentId ? 1 : 0))
+    : null;
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="bg-white rounded-lg shadow-lg w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+        <h2 className="text-base font-bold mb-1">
+          {isTeams ? 'Change Team' : 'Change Pair'}
+        </h2>
+        <p className="text-sm text-gray-500 mb-4">
+          Select the {isTeams ? 'team' : 'pair'} to view this deal set from:
+        </p>
+        {sortedParticipants === null ? (
+          <p className="text-sm text-gray-400 py-4 text-center">Loading...</p>
+        ) : sortedParticipants.length === 0 ? (
+          <p className="text-sm text-gray-400 py-4 text-center">No participants found.</p>
+        ) : (
+          <div style={{ maxHeight: '50vh', overflowY: 'auto', marginBottom: 20 }}>
+            {currentId && (
+              <div style={{ fontSize: '0.7rem', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', paddingLeft: 2, marginBottom: 4 }}>
+                Current
+              </div>
+            )}
+            {sortedParticipants.map((p, i) => {
+              const isCurrent = p.id === currentId;
+              const isSelected = p.id === selected;
+              return (
+                <div key={p.id}>
+                  {i > 0 && sortedParticipants[i - 1].id === currentId && (
+                    <hr style={{ borderColor: '#e5e7eb', margin: '8px 0' }} />
+                  )}
+                  <button
+                    onClick={() => setSelected(p.id)}
+                    style={{
+                      display: 'block', width: '100%', textAlign: 'left', padding: '7px 12px',
+                      borderRadius: 6, cursor: 'pointer', fontSize: '0.875rem', marginBottom: 4,
+                      border: isSelected ? '2px solid #4f46e5' : isCurrent ? '1px solid #a5b4fc' : '1px solid #e5e7eb',
+                      background: isSelected ? '#eef2ff' : isCurrent ? '#f5f3ff' : '#fff',
+                      color: isSelected ? '#3730a3' : isCurrent ? '#4f46e5' : '#374151',
+                      fontWeight: isSelected || isCurrent ? 600 : 400,
+                    }}
+                  >
+                    #{p.number} {p.name}
+                    {isCurrent && !isSelected && (
+                      <span style={{ marginLeft: 8, fontSize: '0.7rem', color: '#818cf8', fontWeight: 400 }}>current</span>
+                    )}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <div className="flex gap-2 justify-end">
+          <button onClick={onClose} className="px-4 py-2 border border-gray-300 rounded text-sm hover:bg-gray-50">Cancel</button>
+          <button
+            disabled={!selected || saving}
+            onClick={handleSave}
+            className="px-4 py-2 bg-indigo-600 text-white rounded text-sm hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-default"
+          >
+            {saving ? 'Saving...' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function dedupeTrailingLastName(name) {
+  if (!name) return name;
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2 && parts[parts.length - 1].toLowerCase() === parts[parts.length - 2].toLowerCase()) {
+    return parts.slice(0, -1).join(' ');
+  }
+  return name;
+}
+
+function PlayerPickerDialog({ analysis, supabase, isTeams, onPick, onClose }) {
+  const [players, setPlayers] = useState(null);
+  const [sel, setSel] = useState(null);
+  const [cns, setCns] = useState('UDCA');
+  const [cew, setCew] = useState('UDCA');
+
+  const participantId = analysis?.filters?.participant_id;
+
+  useEffect(() => {
+    if (!participantId) { setPlayers([]); return; }
+    supabase.from('bg_participants').select('roster, name').eq('id', participantId).single()
+      .then(({ data }) => {
+        if (!data) { setPlayers([]); return; }
+        let roster = data.roster;
+        if (typeof roster === 'string') { try { roster = JSON.parse(roster); } catch { roster = []; } }
+        if (!Array.isArray(roster)) { setPlayers([]); return; }
+        const names = roster.map(p => dedupeTrailingLastName(typeof p === 'string' ? p : p?.name)).filter(Boolean);
+        setPlayers(names);
+      });
+  }, [participantId]);
+
+  if (players !== null && players.length === 0) {
+    return (
+      <DirectionPickerDialog
+        onPick={({ direction, cardingNS, cardingEW }) => onPick({ player: null, direction, cardingNS, cardingEW })}
+        onClose={onClose}
+      />
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="bg-white rounded-lg shadow-lg w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+        <h2 className="text-base font-bold mb-2">Choose your player</h2>
+        {players === null ? (
+          <p className="text-sm text-gray-400 py-4 text-center">Loading...</p>
+        ) : (
+          <>
+            <p className="text-sm text-gray-500 mb-4">
+              {isTeams
+                ? 'Select which team member you are playing as:'
+                : 'Select which player in the pair you are:'}
+            </p>
+            <div className="flex flex-wrap gap-2 mb-5">
+              {players.map(p => (
+                <button
+                  key={p}
+                  onClick={() => setSel(p)}
+                  style={{
+                    padding: '6px 18px', borderRadius: 6, fontWeight: 700, fontSize: '0.9rem', cursor: 'pointer',
+                    border: sel === p ? '2px solid #2563eb' : '1px solid #d1d5db',
+                    background: sel === p ? '#2563eb' : '#fff',
+                    color: sel === p ? '#fff' : '#374151',
+                  }}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-4 mb-5 text-sm text-gray-500">
+              <label className="flex flex-col gap-1">
+                NS carding
+                <select value={cns} onChange={e => setCns(e.target.value)} className="px-2 py-1 border border-gray-300 rounded text-sm">
+                  <option value="UDCA">UDCA</option>
+                  <option value="STD">Standard</option>
+                </select>
+              </label>
+              <label className="flex flex-col gap-1">
+                EW carding
+                <select value={cew} onChange={e => setCew(e.target.value)} className="px-2 py-1 border border-gray-300 rounded text-sm">
+                  <option value="UDCA">UDCA</option>
+                  <option value="STD">Standard</option>
+                </select>
+              </label>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={onClose} className="px-4 py-2 border border-gray-300 rounded text-sm hover:bg-gray-50">Cancel</button>
+              <button
+                disabled={!sel}
+                onClick={() => onPick({ player: sel, cardingNS: cns, cardingEW: cew })}
+                className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-40 disabled:cursor-default"
+              >
+                Play →
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

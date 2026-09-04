@@ -167,6 +167,7 @@ export default defineConfig({
     alias: {
       ...(fs.existsSync(path.resolve('../ips')) ? { 'ips': path.resolve('../ips') } : {}),
       ...(fs.existsSync(path.resolve('../games-retrieval')) ? { 'games-retrieval': path.resolve('../games-retrieval') } : {}),
+      ...(fs.existsSync(path.resolve('../games-display')) ? { 'games-display': path.resolve('../games-display') } : {}),
       react: path.resolve('./node_modules/react'),
       'react-dom': path.resolve('./node_modules/react-dom'),
     },
