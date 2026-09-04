@@ -1,41 +1,71 @@
-# Deploy bsd-games + bsd-app
+# Deploy bsd-app and all related repos
 
-Run the full deployment pipeline: commit bsd-games, push, and redeploy both bsd-games and bsd-app to Vercel production with cache busting.
+Run the full deployment pipeline: commit all changed repos, push to GitHub, update bsd-app's pinned dependency hashes, and redeploy bsd-app to Vercel production with cache busting.
+
+## Related repos to check
+
+Always check these repos for uncommitted changes before deploying:
+
+| Repo | Path | Branch | bsd-app dependency |
+|------|------|--------|-------------------|
+| `ips` | `/Users/umajalapathy/ips` | `main` | pinned to commit hash |
+| `games-display` | `/Users/umajalapathy/games-display` | `master` | pinned to branch `#master` |
+| `bsd-games` | `/Users/umajalapathy/bsd-games` | `main` | pinned to commit hash |
+| `games-retrieval` | `/Users/umajalapathy/games-retrieval` | `main` | pinned to commit hash |
+| `bsd-lib` | `/Users/umajalapathy/bsd-lib` | `main` | pinned to branch `#main` |
+| `bsd-app` | `/Users/umajalapathy/bsd-app` | `main` | — (the app itself) |
+
+Check all at once:
+```bash
+for repo in bsd-app bsd-lib bsd-games games-display games-retrieval ips; do
+  echo "=== $repo ===" && git -C "/Users/umajalapathy/$repo" status --short && git -C "/Users/umajalapathy/$repo" log --oneline -1 && echo ""
+done
+```
 
 ## Steps
 
-1. **Commit & push bsd-games** (this repo):
-   - Run `git status` and `git diff` to see what changed.
-   - If there are changes, stage them, commit with a descriptive message, and `git push origin main`.
-   - If clean, skip to step 2.
+1. **Commit & push all changed library repos** (ips, games-display, bsd-games, games-retrieval, bsd-lib):
+   - For each repo with changes: `git add -A && git commit -m "..."` and push to its remote.
+   - Skip clean repos.
 
-2. **Deploy bsd-games to Vercel**:
-   - Run `cd /Users/umajalapathy/bsd-games && npx vercel --prod --yes --force`
+2. **Update bsd-app's pinned dependency hashes**:
+   - For repos pinned to a commit hash (ips, bsd-games, games-retrieval), update `package.json` with the new HEAD hash:
+     ```bash
+     git -C /Users/umajalapathy/<repo> rev-parse HEAD
+     ```
+   - Edit `bsd-app/package.json` to set `"<pkg>": "github:umasbridge/<repo>#<newhash>"`.
+   - Repos pinned to a branch name (bsd-lib `#main`, games-display `#master`) — just update package-lock by following the next step; no package.json edit needed.
 
-3. **Update bsd-app's bsd-games dependency**:
-   - Get the latest bsd-games commit hash: `git -C /Users/umajalapathy/bsd-games rev-parse HEAD`
-   - In bsd-app, update package.json to pin to that hash: `github:umasbridge/bsd-games#<hash>`
-   - **Critical**: delete both `node_modules/bsd-games` AND `package-lock.json` before reinstalling — npm's lock file caches a resolved git hash that won't update with just `rm -rf node_modules/bsd-games && npm install`.
-   - Run `cd /Users/umajalapathy/bsd-app && rm -rf node_modules/bsd-games && rm package-lock.json && npm install`
-   - Verify the installed code has the new commit: check that `grep 'resolved' package-lock.json | grep bsd-games` shows the correct hash, and spot-check a changed file in `node_modules/bsd-games/`.
+3. **Regenerate package-lock.json** (ALWAYS delete first):
+   - **Critical**: `npm install --package-lock-only` without deleting first will silently keep old cached GitHub hashes in the lock file, causing Vercel to install old code even after the hash in package.json is updated.
+   - Always do:
+     ```bash
+     cd /Users/umajalapathy/bsd-app
+     rm package-lock.json
+     npm install --package-lock-only
+     ```
+   - Verify new hashes landed: `grep -E "resolved.*umasbridge" package-lock.json`
 
 4. **Commit & push bsd-app**:
    - Stage `package.json` and `package-lock.json`.
-   - Commit with message like "Update bsd-games to <short-hash>".
+   - Commit with message like "Bump ips, bsd-games to latest".
    - `git push origin main`
 
-5. **Deploy bsd-app to Vercel with cache bust**:
-   - Run `cd /Users/umajalapathy/bsd-app && npx vercel --prod --yes --force`
-   - The `--force` flag is critical — without it, Vercel may serve cached node_modules.
+5. **Deploy bsd-app to Vercel**:
+   - Run: `cd /Users/umajalapathy/bsd-app && npx vercel --prod --yes --force`
+   - `--force` is critical — without it, Vercel may serve cached node_modules with old GitHub deps.
 
-6. **Verify**:
-   - Navigate to `https://bsd-app-bay.vercel.app` and confirm the new changes are live.
+6. **Deploy bsd-games to Vercel** (if bsd-games changed):
+   - Run: `cd /Users/umajalapathy/bsd-games && npx vercel --prod --yes --force`
+   - bsd-games standalone URL: `https://bsd-games.vercel.app`
+
+7. **Verify**:
+   - bsd-app production URL: `https://bsd-app-bay.vercel.app`
    - Tell the user to hard-refresh on their phone (pull-to-refresh on iOS Safari, or clear cache).
 
 ## Important notes
-- Always use `--force` on the bsd-app deploy to bust Vercel's npm cache.
-- **npm lock file gotcha**: `package-lock.json` caches the resolved git commit hash for GitHub dependencies. Even if you update the hash in `package.json` and delete `node_modules/bsd-games`, `npm install` will reinstall the OLD commit from the lock file. You MUST delete `package-lock.json` to force resolution of the new hash.
-- **bsd-app uses `components/GameAnalysis.jsx`**, not `src/App.jsx`. When changing routing or component wiring, update GameAnalysis.jsx — that's the entry point bsd-app imports.
-- The bsd-app production URL is `https://bsd-app-bay.vercel.app`.
-- The bsd-games standalone URL is `https://bsd-games.vercel.app` (dev entry point only).
-- If the user says they still see old content on mobile, it's browser cache — suggest hard refresh or clearing Safari/Chrome cache.
+
+- Always use `--force` on Vercel deploys to bust npm cache for GitHub dependencies.
+- **npm lock file gotcha**: `package-lock.json` caches the resolved git commit hash for GitHub dependencies. Even if you update the hash in `package.json`, `npm install` may reinstall the old commit from the lock file. Deleting `package-lock.json` before `npm install --package-lock-only` forces fresh resolution.
+- **bsd-app uses `components/GameAnalysis.jsx`** as the entry point bsd-app imports for games — not `src/App.jsx`.
+- If the user still sees old content on mobile after deploy, suggest hard refresh or clearing Safari/Chrome cache.

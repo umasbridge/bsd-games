@@ -1013,37 +1013,48 @@ export function TravellerTable({ board, boardResults, participantMap, highlightP
       </div>;
     };
 
-    const selectedTeamName = participantMap[highlightParticipantId]?.name || 'Team';
-
     return <>
       <table className="text-xs" style={{ borderCollapse: 'collapse', width: 'auto' }}>
         <thead><tr className="border-b border-gray-300 text-gray-600 bg-gray-50">
           <th className="py-1.5 px-3 text-left">Closed Room</th>
           <th className="py-1.5 px-3 text-left border-l border-gray-200">Open Room</th>
-          <th className="py-1.5 px-3 text-left border-l border-gray-200">{selectedTeamName} Score</th>
+          <th className="py-1.5 px-3 text-left border-l border-gray-200">IMPs</th>
         </tr></thead>
         <tbody>{pairs.map((pair, index) => {
           const c = pair.closed; const o = pair.open;
-          const teamScore = (r) => {
-            if (!r) return null;
-            const score = Number(r.score || 0);
-            if (!highlightParticipantId) return score;
-            if (r.ns_participant_id === highlightParticipantId) return score;
-            if (r.ew_participant_id === highlightParticipantId) return -score;
-            return null;
-          };
-          const closedScore = teamScore(c); const openScore = teamScore(o);
-          const swing = closedScore == null || openScore == null ? null : closedScore + openScore;
-          const imps = swing == null ? null : scoreToImps(swing);
+          // Compute swing directly from both rooms' NS-perspective scores.
+          // open NS team swing = open.score − closed.score (they play NS in open, EW in closed)
+          // closed NS team swing = −open NS swing (mirror)
+          const openNsScore = o?.score != null ? Number(o.score) : null;
+          const closedNsScore = c?.score != null ? Number(c.score) : null;
+          const openNsSwing = openNsScore != null && closedNsScore != null ? openNsScore - closedNsScore : null;
+          const openNsImps = openNsSwing != null ? scoreToImps(openNsSwing) : null;
+          const closedNsImps = openNsImps != null ? -openNsImps : null;
+          const openNsId = o?.ns_participant_id;
+          const closedNsId = c?.ns_participant_id;
+          const openNsName = participantMap[openNsId]?.name || 'Open NS';
+          const closedNsName = participantMap[closedNsId]?.name || 'Closed NS';
+          const pairInvolvesUs = highlightParticipantId && (
+            o?.ns_participant_id === highlightParticipantId || o?.ew_participant_id === highlightParticipantId ||
+            c?.ns_participant_id === highlightParticipantId || c?.ew_participant_id === highlightParticipantId
+          );
           const signed = (n) => n == null ? '—' : n > 0 ? `+${n}` : `${n}`;
-          return <tr key={index} className={highlightParticipantId ? 'bg-blue-50' : ''}>
+          const impLine = (name, imps, pid) => {
+            const isOurs = highlightParticipantId && pid === highlightParticipantId;
+            return (
+              <div className={`flex items-center justify-between gap-3 py-0.5 ${isOurs ? 'font-bold' : ''}`}>
+                <span className="text-gray-700 truncate max-w-[110px]">{name}</span>
+                <span className={`font-mono tabular-nums ${imps > 0 ? 'text-green-700' : imps < 0 ? 'text-red-600' : 'text-gray-500'}`}>{signed(imps)}</span>
+              </div>
+            );
+          };
+          return <tr key={index} className={pairInvolvesUs ? 'bg-blue-50' : ''}>
             <td className="py-2 px-3 align-top border-b border-gray-200">{roomPanel(c)}</td>
             <td className="py-2 px-3 align-top border-l border-b border-gray-200">{roomPanel(o)}</td>
-            <td className="py-2 px-3 align-top border-l border-b border-gray-200 min-w-[155px]">
-              <div className="min-h-[112px] flex flex-col">
-                <div>Closed: <span className="font-mono font-semibold ml-2">{signed(closedScore)}</span></div>
-                <div className="mt-2">Open: <span className="font-mono font-semibold ml-2">{signed(openScore)}</span></div>
-                <div className={`mt-auto pt-2 border-t border-gray-200 font-bold ${imps > 0 ? 'text-green-700' : imps < 0 ? 'text-red-600' : 'text-gray-600'}`}>IMPs: {signed(imps)}</div>
+            <td className="py-2 px-3 align-top border-l border-b border-gray-200 min-w-[160px]">
+              <div className="min-h-[112px] flex flex-col justify-center gap-1">
+                {impLine(openNsName, openNsImps, openNsId)}
+                {impLine(closedNsName, closedNsImps, closedNsId)}
               </div>
             </td>
           </tr>;
