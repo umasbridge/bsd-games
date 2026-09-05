@@ -179,15 +179,19 @@ export default function AnalysisView({ supabase: sbProp, analysis, userId, onBac
 
   // Normalize source results once; presentation metadata is added below.
   const normalizedRows = useMemo(() => {
+    console.log('[AnalysisView] normalizedRows recalc', { boards: boards.length, results: results.length, isTeams, pid: filters.participant_id });
     if (!boards.length || !results.length) return [];
 
     if (isTeams) {
       const teamRows = buildTeamRows(boards, results, filters);
+      console.log('[AnalysisView] buildTeamRows ->', teamRows.length);
       // BridgeWebs teams-in-pairs events have type='teams' but no match_id/room fields.
       // Fall back to pair-row pairing so they display correctly.
       if (teamRows.length > 0) return teamRows;
     }
-    return buildPairRows(boards, results, filters);
+    const pairRows = buildPairRows(boards, results, filters);
+    console.log('[AnalysisView] buildPairRows ->', pairRows.length);
+    return pairRows;
   }, [boards, results, filters, isTeams]);
 
   const effectiveIsTeams = isTeams || normalizedRows.some(r => r.otherRoom != null);
