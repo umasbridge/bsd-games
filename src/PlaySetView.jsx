@@ -399,7 +399,7 @@ function PlayBoardRow({ row, isTeams, scoring, participantMap, boardResults, our
 }
 
 function DraggablePlayPopup({ title, onClose, width = 'max-content', children }) {
-  const [position, setPosition] = useState({ x: 320, y: 72 });
+  const [position, setPosition] = useState({ x: Math.min(320, Math.max(8, window.innerWidth - 420)), y: 72 });
   const dragOffset = React.useRef(null);
 
   const startDrag = (event) => {

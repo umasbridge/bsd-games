@@ -1152,12 +1152,12 @@ export function TravellerTable({ board, boardResults, participantMap, highlightP
       const score = Number(r.score || 0);
       const scoreSide = score > 0 ? 'NS' : score < 0 ? 'EW' : '';
       const canView = linHasPlay(r.lin) || linHasBidding(r.lin);
-      return <div className="min-w-[225px]">
+      return <div className="min-w-0">
         <div className="grid grid-cols-[26px_1fr] gap-x-2 gap-y-1">
           <div className="font-semibold text-gray-500">NS</div><div>{seatCell(r, 'NS')}</div>
           <div className="font-semibold text-gray-500 border-t border-gray-100 pt-1">EW</div><div className="border-t border-gray-100 pt-1">{seatCell(r, 'EW')}</div>
         </div>
-        <div className="mt-2 pt-2 border-t border-gray-200 flex items-center gap-3 whitespace-nowrap">
+        <div className="mt-2 pt-2 border-t border-gray-200 flex flex-wrap items-center gap-x-3 gap-y-1">
           <span><span className="text-gray-400">Contract </span>{contractCell(r)}</span>
           <span><span className="text-gray-400">Tricks </span>{r.tricks ?? '—'}</span>
           <span><span className="text-gray-400">Lead </span>{leadCell(r)}</span>
@@ -1240,12 +1240,12 @@ export function TravellerTable({ board, boardResults, participantMap, highlightP
       const score = Number(r.score || 0);
       const scoreSide = score > 0 ? 'NS' : score < 0 ? 'EW' : '';
       const canView = linHasPlay(r.lin) || linHasBidding(r.lin);
-      return <div className="min-w-[225px]">
+      return <div className="min-w-0">
         <div className="grid grid-cols-[26px_1fr] gap-x-2 gap-y-1">
           <div className="font-semibold text-gray-500">NS</div><div>{seatCell2(r, 'NS')}</div>
           <div className="font-semibold text-gray-500 border-t border-gray-100 pt-1">EW</div><div className="border-t border-gray-100 pt-1">{seatCell2(r, 'EW')}</div>
         </div>
-        <div className="mt-2 pt-2 border-t border-gray-200 flex items-center gap-3 whitespace-nowrap">
+        <div className="mt-2 pt-2 border-t border-gray-200 flex flex-wrap items-center gap-x-3 gap-y-1">
           <span><span className="text-gray-400">Contract </span>{contractCell2(r)}</span>
           <span><span className="text-gray-400">Tricks </span>{r.tricks ?? '—'}</span>
           <span><span className="text-gray-400">Lead </span>{leadCell2(r)}</span>
@@ -1269,7 +1269,7 @@ export function TravellerTable({ board, boardResults, participantMap, highlightP
           {isTeams && <th className={thClass} onClick={() => handleSort('ns')}>Team{sortIndicator('ns')}</th>}
           <th className={thClass} onClick={() => handleSort('ns')}>N / S{!isTeams && sortIndicator('ns')}</th>
           <th className={thClass} onClick={() => handleSort('ew')}>E / W{sortIndicator('ew')}</th>
-          <th className={thClass} onClick={() => handleSort('contract')}>Contract{sortIndicator('contract')}</th>
+          <th className={thClass} onClick={() => handleSort('contract')}>{sortIndicator('contract')}</th>
           <th className={`${thClass} text-center`} onClick={() => handleSort('tricks')}>Tricks{sortIndicator('tricks')}</th>
           <th className={thClass} onClick={() => handleSort('lead')}>Lead{sortIndicator('lead')}</th>
           <th className={`${thClass} text-right`} onClick={() => handleSort('score')}>Score{sortIndicator('score')}</th>
@@ -1311,19 +1311,19 @@ export function TravellerTable({ board, boardResults, participantMap, highlightP
                 {/* Teams only: NS team (top) / EW team (bottom). */}
                 {isTeams && (
                   <td className="py-1 px-1.5 whitespace-nowrap">
-                    <div className="font-medium truncate max-w-[105px]" title={nsName}>{nsName || '—'}</div>
-                    <div className="text-gray-400 truncate max-w-[105px]" title={ewName}>{ewName || '—'}</div>
+                    <div className="font-medium truncate max-w-[60px] sm:max-w-[105px]" title={nsName}>{nsName || '—'}</div>
+                    <div className="text-gray-400 truncate max-w-[60px] sm:max-w-[105px]" title={ewName}>{ewName || '—'}</div>
                   </td>
                 )}
                 {/* N / S player names */}
                 <td className="py-1 px-1.5 whitespace-nowrap">
-                  <div className="truncate max-w-[95px]" title={northName}>{northName}</div>
-                  <div className="text-gray-400 truncate max-w-[95px]" title={southName}>{southName}</div>
+                  <div className="truncate max-w-[55px] sm:max-w-[95px]" title={northName}>{northName}</div>
+                  <div className="text-gray-400 truncate max-w-[55px] sm:max-w-[95px]" title={southName}>{southName}</div>
                 </td>
                 {/* E / W player names */}
                 <td className="py-1 px-1.5 whitespace-nowrap">
-                  <div className="truncate max-w-[95px]" title={eastName}>{eastName}</div>
-                  <div className="text-gray-400 truncate max-w-[95px]" title={westName}>{westName}</div>
+                  <div className="truncate max-w-[55px] sm:max-w-[95px]" title={eastName}>{eastName}</div>
+                  <div className="text-gray-400 truncate max-w-[55px] sm:max-w-[95px]" title={westName}>{westName}</div>
                 </td>
                 <td className="py-1 px-1.5">
                   {r.passed_out ? 'Pass' : (
