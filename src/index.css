@@ -9,3 +9,21 @@ body {
 td:hover > .bid-tooltip {
   opacity: 1 !important;
 }
+
+/* Fix: IPS hand diagram grid — fluid columns so E hand doesn't overflow on mobile */
+.pt-deal {
+  display: grid !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  max-width: 478px !important;
+  width: 100% !important;
+}
+
+@media (max-width: 499px) {
+  .pt-deal { column-gap: 6px !important; }
+  .pt-pos-n { transform: none !important; }
+  .pt-pos-s { transform: none !important; }
+  .pt-pos-tr { min-width: 0 !important; }
+  .pt-pos-br { width: auto !important; }
+  .pt-hand { min-width: 0 !important; width: 100% !important; box-sizing: border-box !important; }
+  .pt-seatlabel { font-size: 0.7rem !important; padding: 2px 4px !important; }
+}
