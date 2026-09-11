@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase as defaultSupabase } from './supabase.js';
 import { buildTeamRows, buildPairRows, TravellerTable } from './AnalysisView.jsx';
 import { PlayBoard } from 'games-display';
@@ -56,6 +56,9 @@ export default function PlaySetView({ supabase: sbProp, playSet, userId, onBack,
   const [currentIdx, setCurrentIdx] = useState(0);
   const [visitedIdxs, setVisitedIdxs] = useState(() => new Set([0]));
   const [playedResults, setPlayedResults] = useState({});
+  // Tracks the latest full filters object so we can safely merge play_progress into it on save.
+  const latestFiltersRef = useRef(analysis?.filters || {});
+  const saveTimerRef = useRef(null);
 
   const event = analysis?.bg_events;
   const tournament = event?.bg_tournaments;
@@ -105,16 +108,35 @@ export default function PlaySetView({ supabase: sbProp, playSet, userId, onBack,
         supabase.from('bg_boards').select('*').in('stage_id', stageIds).order('board_number'),
         fetchAllResults(),
         participantQuery,
-      ]).then(([bRes, rRes, pRes]) => {
+        supabase.from('bsd_game_analyses').select('filters').eq('id', analysis.id).single(),
+      ]).then(([bRes, rRes, pRes, aRes]) => {
         setBoards(bRes.data || []);
         setResults(rRes.data || []);
         setParticipants(pRes.data || []);
-        setCurrentIdx(0);
-        setVisitedIdxs(new Set([0]));
+        const freshFilters = aRes.data?.filters || analysis?.filters || {};
+        latestFiltersRef.current = freshFilters;
+        const saved = freshFilters.play_progress;
+        const savedIdx = saved?.currentIdx ?? 0;
+        setCurrentIdx(savedIdx);
+        setVisitedIdxs(new Set(savedIdx > 0 ? [0, savedIdx] : [0]));
+        if (saved?.playedResults) setPlayedResults(saved.playedResults);
         setLoading(false);
       });
     });
   }, [analysis?.id]);
+
+  useEffect(() => {
+    if (loading || !analysis?.id) return;
+    clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(async () => {
+      const newFilters = { ...latestFiltersRef.current, play_progress: { currentIdx, playedResults } };
+      latestFiltersRef.current = newFilters;
+      try {
+        await supabase.from('bsd_game_analyses').update({ filters: newFilters }).eq('id', analysis.id);
+      } catch {}
+    }, 1500);
+    return () => clearTimeout(saveTimerRef.current);
+  }, [currentIdx, playedResults, loading]);
 
   const participantMap = useMemo(() => {
     const m = {};

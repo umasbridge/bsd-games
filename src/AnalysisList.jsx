@@ -13,6 +13,48 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
   const [showSmartQuery, setShowSmartQuery] = useState(false);
   const [openMoreId, setOpenMoreId] = useState(null);
   const [changePairAnalysis, setChangePairAnalysis] = useState(null);
+  const [hasBidding, setHasBidding] = useState(null);
+
+  const checkBidding = async (analysesList) => {
+    const results = await Promise.all(analysesList.map(async (a) => {
+      const f = a.filters || {};
+      try {
+        if (f.board_ids?.length) {
+          const { data } = await sb.from('bg_board_results')
+            .select('id').in('board_id', f.board_ids).like('lin', '%mb|%').limit(1);
+          return { id: a.id, has: (data || []).length > 0 };
+        }
+        let stageIds = [];
+        if (f.stage_ids?.length) stageIds = f.stage_ids;
+        else if (f.stage_id) stageIds = [f.stage_id];
+        else if (a.bg_events?.id) {
+          const { data: stData } = await sb.from('bg_stages').select('id').eq('event_id', a.bg_events.id);
+          stageIds = (stData || []).map(s => s.id);
+        }
+        if (!stageIds.length) return { id: a.id, has: false };
+        const { data } = await sb.from('bg_board_results')
+          .select('id').in('stage_id', stageIds).like('lin', '%mb|%').limit(1);
+        return { id: a.id, has: (data || []).length > 0 };
+      } catch {
+        return { id: a.id, has: true };
+      }
+    }));
+    const map = {};
+    for (const { id, has } of results) map[id] = has;
+    setHasBidding(map);
+  };
+
+  const handleResetScores = async (analysis) => {
+    if (!confirm(`Reset scores and progress for "${analysis.name}"?`)) return;
+    try {
+      const { data } = await sb.from('bsd_game_analyses').select('filters').eq('id', analysis.id).single();
+      const newFilters = { ...(data?.filters || analysis.filters || {}) };
+      delete newFilters.play_progress;
+      await sb.from('bsd_game_analyses').update({ filters: newFilters }).eq('id', analysis.id);
+    } catch (e) {
+      console.error('Reset scores error:', e);
+    }
+  };
 
   const fetchAnalyses = async () => {
     try {
@@ -28,6 +70,7 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
       if (error) console.error('Analyses fetch error:', error);
       const loaded = data || [];
       setAnalyses(loaded);
+      if (loaded.length) checkBidding(loaded);
     } catch (e) {
       console.error('fetchAnalyses error:', e);
     } finally {
@@ -114,12 +157,22 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
                     >
                       View
                     </button>
-                    <button
-                      onClick={() => setPendingAnalysis(a)}
-                      className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700"
-                    >
-                      Play
-                    </button>
+                    {(hasBidding === null || hasBidding[a.id] !== false) && (
+                      <>
+                        <button
+                          onClick={() => setPendingAnalysis(a)}
+                          className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700"
+                        >
+                          Play
+                        </button>
+                        <button
+                          onClick={() => handleResetScores(a)}
+                          className="px-3 py-1 border border-gray-200 rounded text-sm text-orange-600 hover:bg-orange-50"
+                        >
+                          Reset Scores
+                        </button>
+                      </>
+                    )}
                     {owner && (
                       <button
                         onClick={() => setChangePairAnalysis(a)}
@@ -244,8 +297,52 @@ function ChangePairModal({ analysis, supabase, onSave, onClose }) {
 
   useEffect(() => {
     if (!eventId) { setParticipants([]); return; }
-    supabase.from('bg_participants').select('id, number, name').eq('event_id', eventId).order('number')
-      .then(({ data }) => setParticipants(data || []));
+
+    const load = async () => {
+      const { data: allParts } = await supabase
+        .from('bg_participants').select('id, number, name').eq('event_id', eventId).order('number');
+
+      const filters = analysis.filters || {};
+      let stageIds;
+      if (filters.stage_ids?.length) {
+        stageIds = filters.stage_ids;
+      } else if (filters.stage_id) {
+        stageIds = [filters.stage_id];
+      } else if (filters.board_ids?.length) {
+        // board_ids mode: find which participants played those boards
+        const { data: rr } = await supabase
+          .from('bg_board_results')
+          .select('ns_participant_id, ew_participant_id')
+          .in('board_id', filters.board_ids);
+        const activeIds = new Set();
+        for (const r of (rr || [])) {
+          if (r.ns_participant_id) activeIds.add(r.ns_participant_id);
+          if (r.ew_participant_id) activeIds.add(r.ew_participant_id);
+        }
+        const filtered = (allParts || []).filter(p => activeIds.has(p.id));
+        setParticipants(filtered.length > 0 ? filtered : (allParts || []));
+        return;
+      } else {
+        const { data: stages } = await supabase.from('bg_stages').select('id').eq('event_id', eventId);
+        stageIds = (stages || []).map(s => s.id);
+      }
+
+      if (!stageIds?.length) { setParticipants(allParts || []); return; }
+
+      const { data: rr } = await supabase
+        .from('bg_board_results')
+        .select('ns_participant_id, ew_participant_id')
+        .in('stage_id', stageIds);
+      const activeIds = new Set();
+      for (const r of (rr || [])) {
+        if (r.ns_participant_id) activeIds.add(r.ns_participant_id);
+        if (r.ew_participant_id) activeIds.add(r.ew_participant_id);
+      }
+      const filtered = (allParts || []).filter(p => activeIds.has(p.id));
+      setParticipants(filtered.length > 0 ? filtered : (allParts || []));
+    };
+
+    load();
   }, [eventId]);
 
   const currentId = analysis.filters?.participant_id || null;
