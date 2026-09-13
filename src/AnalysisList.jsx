@@ -21,7 +21,7 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
       try {
         if (f.board_ids?.length) {
           const { data } = await sb.from('bg_board_results')
-            .select('id').in('board_id', f.board_ids).like('lin', '%mb|%').limit(1);
+            .select('id').in('board_id', f.board_ids).ilike('lin', '%mb|%').limit(1);
           return { id: a.id, has: (data || []).length > 0 };
         }
         let stageIds = [];
@@ -33,7 +33,7 @@ export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAd
         }
         if (!stageIds.length) return { id: a.id, has: false };
         const { data } = await sb.from('bg_board_results')
-          .select('id').in('stage_id', stageIds).like('lin', '%mb|%').limit(1);
+          .select('id').in('stage_id', stageIds).ilike('lin', '%mb|%').limit(1);
         return { id: a.id, has: (data || []).length > 0 };
       } catch {
         return { id: a.id, has: true };
