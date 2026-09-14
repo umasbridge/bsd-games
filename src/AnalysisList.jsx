@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase as defaultSupabase } from './supabase.js';
-import { buildTeamRows, buildPairRows } from './AnalysisView.jsx';
+import { buildTeamRows, buildPairRows } from 'games-display';
 import { downloadLin } from './linExport.js';
 
 export default function AnalysisList({ supabase: sbProp, userId, userEmail, isAdmin, onNew, onRetrieve, onOpen, onCreateNew, onLogout, onBack, Header, ShareDialog, onPlay }) {

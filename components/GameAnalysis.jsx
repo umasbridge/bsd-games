@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import AnalysisList from '../src/AnalysisList.jsx';
 import { RetrieveDeals } from 'games-retrieval';
-import AnalysisView from '../src/AnalysisView.jsx';
-import PlaySetView from '../src/PlaySetView.jsx';
+import { DealView, DealPlay } from 'games-display';
 
 export default function GameAnalysis({ supabase, userId, userEmail, isAdmin, onLogout, onBack, Header, DiscussionView, ShareDialog, onDownloadLin }) {
   const [route, setRoute] = useState({ name: 'list' });
@@ -20,7 +19,7 @@ export default function GameAnalysis({ supabase, userId, userEmail, isAdmin, onL
 
   if (route.name === 'play' && route.playSet) {
     return (
-      <PlaySetView
+      <DealPlay
         supabase={supabase}
         playSet={route.playSet}
         userId={userId}
@@ -32,7 +31,7 @@ export default function GameAnalysis({ supabase, userId, userEmail, isAdmin, onL
 
   if (route.name === 'view' && route.analysis) {
     return (
-      <AnalysisView
+      <DealView
         supabase={supabase}
         analysis={route.analysis}
         userId={userId}
