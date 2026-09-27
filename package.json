@@ -13,7 +13,6 @@
     "@supabase/supabase-js": "^2.97.0",
     "games-display": "github:umasbridge/games-display#master",
     "games-retrieval": "github:umasbridge/games-retrieval#master",
-    "ips": "github:umasbridge/ips#main",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
