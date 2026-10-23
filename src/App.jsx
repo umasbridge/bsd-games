@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from './supabase.js';
 import AnalysisList from './AnalysisList.jsx';
 import { RetrieveDeals } from 'games-retrieval';
-import AnalysisView from './AnalysisView.jsx';
+import { DealView } from 'games-display';
 
 export default function App() {
   const [userId, setUserId] = useState(null);
@@ -37,7 +37,7 @@ export default function App() {
 
   if (view === 'view' && activeAnalysis) {
     return (
-      <AnalysisView
+      <DealView
         analysis={activeAnalysis}
         userId={userId}
         onBack={() => { setActiveAnalysis(null); setActivePlaySet(null); setView('list'); }}
