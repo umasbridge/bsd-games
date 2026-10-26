@@ -1,4 +1,9 @@
 @import "tailwindcss";
+/* games-display renders the deal pages; Tailwind doesn't scan outside the project or
+   node_modules by itself, so its classes (buttons, gaps, colours) must be listed here.
+   The first path is the installed package, the second the sibling checkout used in dev. */
+@source "../node_modules/games-display/src";
+@source "../../games-display/src";
 
 body {
   margin: 0;
